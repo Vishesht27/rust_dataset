@@ -1,0 +1,82 @@
+{
+  "model_name": "Qwen/Qwen2.5-32B-Instruct",
+  "dataset_path": "./data/training_data.jsonl",
+  "dataset_format": "json",
+  "output_dir": "./outputs/qwen2.5-32b-sft",
+  
+  "training": {
+    "per_device_train_batch_size": 2,
+    "per_device_eval_batch_size": 2,
+    "gradient_accumulation_steps": 4,
+    "learning_rate": 2e-5,
+    "num_train_epochs": 3,
+    "max_steps": -1,
+    "warmup_steps": 100,
+    "max_seq_length": 4096,
+    "packing": true
+  },
+  
+  "logging": {
+    "logging_steps": 10,
+    "save_steps": 500,
+    "eval_steps": 500,
+    "evaluation_strategy": "steps",
+    "save_strategy": "steps",
+    "load_best_model_at_end": true,
+    "metric_for_best_model": "eval_loss",
+    "greater_is_better": false
+  },
+  
+  "optimization": {
+    "use_lora": true,
+    "lora_r": 64,
+    "lora_alpha": 128,
+    "lora_dropout": 0.1,
+    "lora_target_modules": [
+      "q_proj", "k_proj", "v_proj", "o_proj",
+      "gate_proj", "up_proj", "down_proj",
+      "lm_head"
+    ],
+    "optim": "adamw_torch_fused",
+    "weight_decay": 0.01,
+    "max_grad_norm": 1.0,
+    "lr_scheduler_type": "cosine",
+    "warmup_ratio": 0.1
+  },
+  
+  "multi_gpu": {
+    "fsdp": "full_shard auto_wrap",
+    "fsdp_config": {
+      "fsdp_auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
+      "fsdp_backward_prefetch": "BACKWARD_PRE",
+      "fsdp_cpu_ram_efficient_loading": true,
+      "fsdp_forward_prefetch": true,
+      "fsdp_offload_params": false,
+      "fsdp_sharding_strategy": "FULL_SHARD",
+      "fsdp_sync_module_states": true,
+      "fsdp_use_orig_params": false
+    },
+    "ddp_find_unused_parameters": false,
+    "ddp_backend": "nccl"
+  },
+  
+  "wandb": {
+    "use_wandb": false,
+    "wandb_project": "qwen2.5-sft",
+    "run_name": "qwen2.5-32b-sft"
+  },
+  
+  "hub": {
+    "push_to_hub": false,
+    "hub_model_id": null,
+    "hub_token": null
+  },
+  
+  "misc": {
+    "seed": 42,
+    "data_seed": 42,
+    "report_to": "none",
+    "gradient_checkpointing": true,
+    "dataloader_pin_memory": true
+  }
+}
