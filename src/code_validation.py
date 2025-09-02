@@ -6,6 +6,15 @@ import re
 import shutil
 from ast import literal_eval
 from task_category import TaskCategory
+import argparse
+
+parser = argparse.ArgumentParser(description="Validate some Rust code.")
+parser.add_argument("--filepath", type=str, default="rust_dataset.csv", help="Input file path")
+parser.add_argument("--task_column", type=str, default="task_category", help="Task column")
+parser.add_argument("--input_column", type=str, default="input_data", help="Input column")
+parser.add_argument("--output_column", type=str, default="output_data", help="Output column")
+parser.add_argument("--output_file", type=str, help="Output file path",required=True)
+args = parser.parse_args()
 
 
 DOCKER_IMAGE = "rustlang/rust:nightly"
@@ -190,7 +199,7 @@ fn main() {{
 
 
 def main(csv_file, input_column, output_column, task_column, output_file="result.csv"):
-    df = pd.read_csv(csv_file).iloc[:30]
+    df = pd.read_csv(csv_file)
 
     compiled_results = []
     executable_results = []
@@ -263,9 +272,9 @@ def main(csv_file, input_column, output_column, task_column, output_file="result
 
 
 if __name__ == "__main__":
-    main("rust_dataset.csv",
-         task_column="task_category",
-         input_column="input_data",
-         output_column="output_data",
-         output_file="rust_results.csv"
+    main(args.filepath,
+         task_column=args.task_column,
+         input_column=args.input_column,
+         output_column=args.output_column,
+         output_file=args.output_file
          )
