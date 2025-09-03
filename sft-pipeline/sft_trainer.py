@@ -147,6 +147,37 @@ class SFTTrainerPipeline:
                         {"role": "user", "content": example["prompt"]},
                         {"role": "assistant", "content": example["completion"]}
                     ]
+                elif "input_data" in example and "output_data" in example:
+                    # Handle CSV format with input_data/output_data
+                    import json
+                    try:
+                        input_json = json.loads(example["input_data"])
+                        output_json = json.loads(example["output_data"])
+                        
+                        # Extract query/question from input
+                        query = input_json.get("query", "")
+                        if not query:
+                            query = input_json.get("title", "")
+                        if not query:
+                            query = input_json.get("description", "")
+                        
+                        # Extract code from output
+                        code = output_json.get("code", "")
+                        if not code:
+                            code = output_json.get("code_snippet", "")
+                        if not code:
+                            code = output_json.get("code_after", "")
+                        
+                        if query and code:
+                            messages = [
+                                {"role": "user", "content": f"Please help me with this Rust programming task: {query}"},
+                                {"role": "assistant", "content": f"Here's the solution:\n\n```rust\n{code}\n```"}
+                            ]
+                        else:
+                            return {"text": ""}
+                    except (json.JSONDecodeError, KeyError) as e:
+                        logger.warning(f"Failed to parse CSV data: {e}")
+                        return {"text": ""}
                 else:
                     logger.warning(f"Unknown data format in example: {example.keys()}")
                     return {"text": ""}
@@ -207,6 +238,10 @@ class SFTTrainerPipeline:
                    f"grad_accum: {gradient_accumulation_steps}, "
                    f"processes: {num_processes})")
         
+        # Check if multi-GPU training is enabled
+        use_multi_gpu = self.config.get("use_multi_gpu", False) and num_processes > 1
+        logger.info(f"Multi-GPU training: {'enabled' if use_multi_gpu else 'disabled'}")
+        
         return SFTConfig(
             output_dir=self.config.get("output_dir", "./qwen2.5-32b-sft"),
             per_device_train_batch_size=per_device_batch_size,
@@ -219,9 +254,8 @@ class SFTTrainerPipeline:
             logging_steps=self.config.get("logging_steps", 10),
             save_steps=self.config.get("save_steps", 500),
             eval_steps=self.config.get("eval_steps", 500),
-            evaluation_strategy=self.config.get("evaluation_strategy", "steps"),
             save_strategy=self.config.get("save_strategy", "steps"),
-            load_best_model_at_end=self.config.get("load_best_model_at_end", True),
+            load_best_model_at_end=False,  # Disable since we don't have eval dataset
             metric_for_best_model=self.config.get("metric_for_best_model", "eval_loss"),
             greater_is_better=False,
             fp16=False,  # Use bf16 instead
@@ -236,19 +270,20 @@ class SFTTrainerPipeline:
             seed=self.config.get("seed", 42),
             data_seed=self.config.get("data_seed", 42),
             # Multi-GPU specific settings
-            ddp_find_unused_parameters=False,
-            ddp_backend="nccl",
-            # FSDP settings for large models
-            fsdp=self.config.get("fsdp", "full_shard auto_wrap"),
-            fsdp_config=self.config.get("fsdp_config", {
-                "fsdp_auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
-                "fsdp_backward_prefetch": "BACKWARD_PRE",
-                "fsdp_cpu_ram_efficient_loading": True,
-                "fsdp_forward_prefetch": True,
-                "fsdp_offload_params": False,
-                "fsdp_sharding_strategy": "FULL_SHARD",
-                "fsdp_sync_module_states": True,
-                "fsdp_use_orig_params": False,
+            **({} if not use_multi_gpu else {
+                "ddp_find_unused_parameters": False,
+                "ddp_backend": "nccl",
+                "fsdp": self.config.get("fsdp", "full_shard auto_wrap"),
+                "fsdp_config": self.config.get("fsdp_config", {
+                    "fsdp_auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
+                    "fsdp_backward_prefetch": "BACKWARD_PRE",
+                    "fsdp_cpu_ram_efficient_loading": True,
+                    "fsdp_forward_prefetch": True,
+                    "fsdp_offload_params": False,
+                    "fsdp_sharding_strategy": "FULL_SHARD",
+                    "fsdp_sync_module_states": True,
+                    "fsdp_use_orig_params": False,
+                }),
             }),
             # Gradient checkpointing for memory efficiency
             gradient_checkpointing=True,
@@ -262,6 +297,10 @@ class SFTTrainerPipeline:
             # Learning rate scheduler
             lr_scheduler_type=self.config.get("lr_scheduler_type","cosine"),
             warmup_ratio=self.config.get("warmup_ratio",0.1),
+            # SFT-specific parameters
+            max_length=self.config.get("max_seq_length", 4096),
+            dataset_text_field="text",
+            packing=self.config.get("packing", True),
         )
         
     def create_trainer(self, dataset: Dataset) -> SFTTrainer:
@@ -279,13 +318,17 @@ class SFTTrainerPipeline:
             model=self.model,
             args=training_args,
             train_dataset=dataset,
-            eval_dataset=None,  # Add validation dataset if available
-            tokenizer=self.tokenizer,
-            data_collator=data_collator,
-            max_seq_length=self.config.get("max_seq_length", 4096),  # Longer sequences
-            dataset_text_field="text",
-            packing=self.config.get("packing", True),  # Enable packing for efficiency
+            eval_dataset=None,  
+            processing_class=self.tokenizer,
         )
+
+        # Only add data_collator if packing is disabled
+        if not self.config.get("packing", True):
+            data_collator = DataCollatorForLanguageModeling(
+                tokenizer=self.tokenizer,
+                mlm=False,
+            )
+            trainer_kwargs["data_collator"] = data_collator
         
         return trainer
         
@@ -316,10 +359,12 @@ class SFTTrainerPipeline:
             # Create trainer
             self.trainer = self.create_trainer(formatted_dataset)
             
-            # Prepare for multi-GPU training
-            self.trainer.model, self.trainer.optimizer, self.trainer.lr_scheduler = self.accelerator.prepare(
-                self.trainer.model, self.trainer.optimizer, self.trainer.lr_scheduler
-            )
+            # Prepare for multi-GPU training if enabled
+            use_multi_gpu = self.config.get("use_multi_gpu", False) and self.accelerator.num_processes > 1
+            if use_multi_gpu:
+                self.trainer.model, self.trainer.optimizer, self.trainer.lr_scheduler = self.accelerator.prepare(
+                    self.trainer.model, self.trainer.optimizer, self.trainer.lr_scheduler
+                )
             
             # Start training
             if self.accelerator.is_main_process:

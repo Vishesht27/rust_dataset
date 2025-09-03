@@ -1,17 +1,17 @@
 {
-  "model_name": "Qwen/Qwen2.5-32B-Instruct",
-  "dataset_path": "./data/training_data.jsonl",
-  "dataset_format": "json",
-  "output_dir": "./outputs/qwen2.5-32b-sft",
+  "model_name": "google/gemma-3-1b-it",
+  "dataset_path": "./data/Rust_dataset - rust_dataset.csv",
+  "dataset_format": "csv",
+  "output_dir": "./outputs/gemma-1b-sft",
   
-  "per_device_train_batch_size": 2,
-  "per_device_eval_batch_size": 2,
-  "gradient_accumulation_steps": 4,
+  "per_device_train_batch_size": 1,
+  "per_device_eval_batch_size": 1,
+  "gradient_accumulation_steps": 2,
   "learning_rate": 2e-5,
   "num_train_epochs": 3,
   "max_steps": -1,
   "warmup_steps": 100,
-  "max_seq_length": 4096,
+  "max_seq_length": 2048,
   "packing": true,
   
   "logging_steps": 10,
@@ -55,6 +55,7 @@
   "ddp_find_unused_parameters": false,
   "ddp_backend": "nccl",
   
+  "use_multi_gpu": false,
   "use_wandb": false,
   "wandb_project": "qwen2.5-sft",
   "run_name": "qwen2.5-32b-sft",
