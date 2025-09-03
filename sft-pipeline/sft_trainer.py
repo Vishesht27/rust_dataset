@@ -34,7 +34,6 @@ logger = logging.getLogger(__name__)
 
 
 class SFTTrainerPipeline:
-    """SFT Training Pipeline for Qwen2.5 32B Model with Multi-GPU Support"""
     
     def __init__(self, config: Dict):
         self.config = config
@@ -55,7 +54,6 @@ class SFTTrainerPipeline:
         logger.info(f"Using device: {self.accelerator.device}")
         
     def load_model_and_tokenizer(self):
-        """Load the Qwen2.5 32B model and tokenizer with full precision"""
         model_name = self.config.get("model_name", "Qwen/Qwen2.5-32B-Instruct")
         
         logger.info(f"Loading model: {model_name}")
@@ -256,14 +254,14 @@ class SFTTrainerPipeline:
             gradient_checkpointing=True,
             # Optimizer settings
             optim=self.config.get("optim", "adamw_torch_fused"),
-            adam_beta1=0.9,
-            adam_beta2=0.95,
-            adam_epsilon=1e-8,
-            weight_decay=0.01,
-            max_grad_norm=1.0,
+            adam_beta1=self.config.get("adam_beta1",0.9),
+            adam_beta2=self.config.get("adam_beta2",0.95),
+            adam_epsilon=self.config.get("adam_epsilon",1e-8),
+            weight_decay=self.config.get("weight_decay",0.01),
+            max_grad_norm=self.config.get("max_grad_norm",1.0),
             # Learning rate scheduler
-            lr_scheduler_type="cosine",
-            warmup_ratio=0.1,
+            lr_scheduler_type=self.config.get("lr_scheduler_type","cosine"),
+            warmup_ratio=self.config.get("warmup_ratio",0.1),
         )
         
     def create_trainer(self, dataset: Dataset) -> SFTTrainer:
