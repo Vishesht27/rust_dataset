@@ -50,12 +50,13 @@ def extract_crates(code: str) -> dict:
     return crates
 
 
-def generate_cargo_toml(proj_dir: str, crates: dict) -> None:
+def generate_cargo_toml(proj_dir: str, crates: dict, force_replace_to_hyphen: bool = True) -> None:
     cargo_toml = os.path.join(proj_dir, "Cargo.toml")
     with open(cargo_toml, "a") as f:
         # f.write("\n[dependencies]\n")
         for crate in crates:
-            crate = crate.replace("_", "-")  # Crate names use hyphens
+            if force_replace_to_hyphen:
+                crate = crate.replace("_", "-") # Crate names use hyphens
             if crate in ["std", "core", "alloc", "crate"]:
                 continue
             elif crate == "tokio":
@@ -99,7 +100,7 @@ def run_cargo_check(docker_proj:str, cargo_registry: str, cargo_git: str):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=60
+                timeout=120
             )
     return check_proc
 
@@ -120,16 +121,18 @@ def run_cargo_run(docker_proj:str, cargo_registry: str, cargo_git: str):
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
                 text=True,
-                timeout=60
+                timeout=120
             )
     return run_proc
 
-def check_with_docker(code: str) -> tuple[bool, bool]:
+def check_with_docker(code: str, crates: dict | None = None, 
+                      force_replace_crates_to_hyphen: bool = True) -> tuple[bool, bool]:
     """
     Check if Rust code compiles and executes inside a Docker sandbox.
     Returns (compiled, executable, stdout/stderr).
     """
-    crates = extract_crates(code)
+    if not crates:
+        crates = extract_crates(code)
 
     print(f"Extracted crates: {crates}")
 
@@ -150,7 +153,8 @@ def check_with_docker(code: str) -> tuple[bool, bool]:
                 f.write(code)
 
             # Append dependencies to Cargo.toml
-            generate_cargo_toml(proj_dir,crates)
+            generate_cargo_toml(proj_dir,crates,
+                                force_replace_to_hyphen=force_replace_crates_to_hyphen)
 
             # Copy to docker context
             docker_proj = os.path.join(tmpdir, "docker_proj")
@@ -271,10 +275,56 @@ def main(csv_file, input_column, output_column, task_column, output_file="result
     print(f"Results saved to {output_file}")
 
 
+def check_alexey_data(csv_file, code_column, crates_column, output_file="result_alexey.csv"):
+    df = pd.read_csv(csv_file)
+
+    compiled_results = []
+    executable_results = []
+    stdout_results = []
+
+    num_rows = len(df)
+    print(f"Processing {num_rows} rows from {csv_file}...")
+
+    for idx in range(num_rows):
+        try:
+            print(f"Checking row {idx} inside Docker sandbox...")
+            code = df.loc[idx, code_column]
+            crates_list = literal_eval(df.loc[idx, crates_column])
+            crates = {crate: "*" for crate in crates_list}
+     
+            compiled, executable, stdout = check_with_docker(code, crates,
+                                                             force_replace_crates_to_hyphen=False)
+
+            # print(f"Code:\n{code}\n{'-'*40}")
+            print(f"Row {idx}: Compiled={compiled}, Executable={executable}")
+            print('-'*80)
+
+            compiled_results.append(compiled)
+            executable_results.append(executable)
+            stdout_results.append(stdout)
+        except Exception as e:
+            print(f"Error processing row {idx}: {e}")
+            compiled_results.append(False)
+            executable_results.append(False)
+            stdout_results.append(str(e))
+
+    df["compiled"] = compiled_results
+    df["executable"] = executable_results
+    df["stdout"] = stdout_results
+    df.to_csv(output_file, index=False)
+    print(f"Results saved to {output_file}")
+
+
 if __name__ == "__main__":
-    main(args.filepath,
-         task_column=args.task_column,
-         input_column=args.input_column,
-         output_column=args.output_column,
-         output_file=args.output_file
-         )
+    # main(args.filepath,
+    #      task_column=args.task_column,
+    #      input_column=args.input_column,
+    #      output_column=args.output_column,
+    #      output_file=args.output_file
+    #      )
+
+    check_alexey_data(args.filepath, 
+                      code_column="checked_code", 
+                      crates_column="dependencies_to_add",
+                      output_file=args.output_file,
+                      )
