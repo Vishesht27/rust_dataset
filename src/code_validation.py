@@ -136,6 +136,8 @@ def check_with_docker(code: str, crates: dict | None = None,
 
     print(f"Extracted crates: {crates}")
 
+    compiled, executable = False,False
+
     try:
         with tempfile.TemporaryDirectory() as tmpdir:
             proj_dir = os.path.join(tmpdir, "testproj")
@@ -166,30 +168,32 @@ def check_with_docker(code: str, crates: dict | None = None,
             fetch_proc = run_cargo_fetch(docker_proj,cargo_registry,cargo_git)
             if fetch_proc.returncode != 0:
                 print(f"Dependency fetch failed: {fetch_proc.stderr}")
-                return False, False, fetch_proc.stderr
+                return compiled, executable, fetch_proc.stderr
             else:
                 print(f"Dependency fetch succeeded: {fetch_proc.stdout}")
 
             # STEP 2: Check without network
             check_proc = run_cargo_check(docker_proj,cargo_registry,cargo_git)
-            if check_proc.returncode != 0:
+            compiled = check_proc.returncode == 0
+            if not compiled:
                 print(f"Check failed: {check_proc.stderr}")
-                return False, False, check_proc.stderr
+                return compiled, executable, check_proc.stderr
             else:
                 print(f"Check succeeded: {check_proc.stdout}")
 
             # STEP 3: Run without network, with limits
             run_proc = run_cargo_run(docker_proj,cargo_registry,cargo_git)
-            if run_proc.returncode != 0:
+            executable = run_proc.returncode == 0
+            if not executable:
                 print(f"Run failed: {run_proc.stderr}")
-                return True, False, run_proc.stderr
+                return compiled, executable, run_proc.stderr
             else:
                 print(f"Run succeeded: {run_proc.stdout}")
-            return True, True, run_proc.stdout
+            return compiled, executable, run_proc.stdout
 
     except Exception as e:
         print(f"Error during Docker execution: {e}")
-        return False, False, str(e)
+        return compiled, executable, str(e)
 
 
 def build_rust_main(code: str, code_context: str) -> str:
