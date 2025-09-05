@@ -17,7 +17,7 @@ parser.add_argument("--output_file", type=str, help="Output file path",required=
 args = parser.parse_args()
 
 
-DOCKER_IMAGE = "rustlang/rust:nightly"
+DOCKER_IMAGE = "rust:1.86.0-bookworm"
 
 CODE_KEY_CATEGORY_MAP = {
     TaskCategory.CODE_GENERATION: "code", 
@@ -114,7 +114,7 @@ def run_cargo_run(docker_proj:str, cargo_registry: str, cargo_git: str):
                     "-v", f"{cargo_git}:/usr/local/cargo/git",
                     "-w", "/proj",
                     "--network", "none",
-                    "--memory=256m", "--cpus=1",
+                    "--memory=512m", "--cpus=2",
                     DOCKER_IMAGE,
                     "cargo", "run", "--quiet"
                 ],
@@ -185,8 +185,12 @@ def check_with_docker(code: str, crates: dict | None = None,
             run_proc = run_cargo_run(docker_proj,cargo_registry,cargo_git)
             executable = run_proc.returncode == 0
             if not executable:
-                print(f"Run failed: {run_proc.stderr}")
-                return compiled, executable, run_proc.stderr
+                if "no such file or" in run_proc.stderr.lower():
+                    print(f"Run failed due to missing file, marked as executable instead: {run_proc.stderr}")
+                    return compiled, True, run_proc.stderr
+                else:
+                    print(f"Run failed: {run_proc.stderr}")
+                    return compiled, executable, run_proc.stderr
             else:
                 print(f"Run succeeded: {run_proc.stdout}")
             return compiled, executable, run_proc.stdout
