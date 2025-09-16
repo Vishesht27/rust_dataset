@@ -4,6 +4,8 @@ import tempfile
 import os
 import re
 import shutil
+import httpx
+import json
 from ast import literal_eval
 from task_category import TaskCategory
 import argparse
@@ -14,6 +16,7 @@ parser.add_argument("--task_column", type=str, default="task_category", help="Ta
 parser.add_argument("--input_column", type=str, default="input_data", help="Input column")
 parser.add_argument("--output_column", type=str, default="output_data", help="Output column")
 parser.add_argument("--output_file", type=str, help="Output file path",required=True)
+parser.add_argument("--autoparse_dependencies", type=str, default="true", help="Auto-parse dependencies from code")
 args = parser.parse_args()
 
 
@@ -48,6 +51,51 @@ def extract_crates(code: str) -> dict:
             if crate not in crates:
                 crates[crate] = "*"  # default version, can be refined later
     return crates
+
+
+def fetch_all_dependencies(crate_name: str):
+    dependencies = [crate_name]
+
+    base_url = "https://crates.io/api/v1/crates"
+
+    with httpx.Client() as client:
+        try:
+
+            crate_info_url = f"{base_url}/{crate_name}"
+            crate_info_response = client.get(crate_info_url)
+            crate_info_response.raise_for_status()
+            crate_data = crate_info_response.json()
+
+            newest_version = crate_data['crate']['newest_version']
+
+            dependencies_url = None
+            for version in crate_data['versions']:
+                if version['num'] == newest_version:
+                    dependencies_url = version['links']['dependencies']
+                    break
+
+            if not dependencies_url:
+                print(f"Failed to find dependencies URL for '{crate_name}'.")
+                return dependencies
+
+            full_dependencies_url = f"https://crates.io{dependencies_url}"
+            dependencies_response = client.get(full_dependencies_url)
+            dependencies_response.raise_for_status()
+            dependencies_data = dependencies_response.json()
+
+            for dep in dependencies_data.get('dependencies', []):
+                if dep.get('kind') == 'normal':
+                    dependencies.append(dep['crate_id'])
+
+        except httpx.HTTPStatusError as e:
+            print(f"HTTP error occurred: {e}")
+
+        except httpx.RequestError as e:
+            print(f"An error occurred while requesting dependencies for '{crate_name}': {e}")
+        except KeyError:
+            print(f"Invalid API response for '{crate_name}'.")
+
+    return json.dumps(dependencies)
 
 
 def generate_cargo_toml(proj_dir: str, crates: dict, force_replace_to_hyphen: bool = True) -> None:
@@ -126,15 +174,26 @@ def run_cargo_run(docker_proj:str, cargo_registry: str, cargo_git: str):
     return run_proc
 
 def check_with_docker(code: str, crates: dict | None = None, 
-                      force_replace_crates_to_hyphen: bool = True) -> tuple[bool, bool]:
+                      force_replace_crates_to_hyphen: bool = True, crate_name=None) -> tuple[bool, bool]:
     """
     Check if Rust code compiles and executes inside a Docker sandbox.
     Returns (compiled, executable, stdout/stderr).
     """
-    if not crates:
-        crates = extract_crates(code)
 
-    print(f"Extracted crates: {crates}")
+    if not crate_name:
+        extracted_crates = extract_crates(code)
+    else:
+        dependencies_to_add = fetch_all_dependencies(crate_name)
+        extracted_crates = {name: "*" for name in json.loads(dependencies_to_add)}
+
+    print(f"Extracted crates (auto): {extracted_crates}")
+
+    if crates:
+        print(f"Provided crates (manual): {crates}")
+        crates.update(extracted_crates)
+    else:
+        crates = extracted_crates
+    print(f"Final crates: {crates}")
 
     compiled, executable = False,False
 
@@ -200,14 +259,33 @@ def check_with_docker(code: str, crates: dict | None = None,
         return compiled, executable, str(e)
 
 
-def build_rust_main(code: str, code_context: str) -> str:
+def build_rust_main(code: str, code_context: str | None) -> str:
+    code_context = code_context if code_context else ""
+
+    if '?' in code and 'use std::error::Error;' not in code_context:
+        code_context = f"use std::error::Error;\n{code_context}"
+
     if "fn main" in code:
         return f"{code_context}\n{code}"
+
+    if '?' in code:
+        return f"""{code_context}
+fn main() -> Result<(), Box<dyn Error>> {{
+    {code}
+    Ok(())
+}}"""
     else:
         return f"""{code_context}
 fn main() {{
     {code}
 }}"""
+
+
+def parse_object(obj: str) -> dict:
+    try:
+        return literal_eval(obj)
+    except Exception as e:
+        return json.loads(obj)
 
 
 def main(csv_file, input_column, output_column, task_column, output_file="result.csv"):
@@ -224,9 +302,18 @@ def main(csv_file, input_column, output_column, task_column, output_file="result
         try:
             print(f"Checking row {idx} inside Docker sandbox...")
             input_data = df.loc[idx, input_column]
-            code_context = literal_eval(input_data).get("code_context", "")
-            output = df.loc[idx, output_column]
             task = df.loc[idx, task_column]
+            crate_name = df.loc[idx, "crate_name"]
+
+            if task != TaskCategory.TEST_GENERATION:
+                code_context = parse_object(input_data).get("code_context", "")
+            else:
+                code_context = parse_object(input_data).get("test_context", "")
+            output = df.loc[idx, output_column]
+
+            # Remove ```json in output
+            if output.startswith("```json"):
+                output = output[8:-3].strip()
 
             print(f"Task: {task}")
             if CODE_KEY_CATEGORY_MAP[task] == "":
@@ -235,11 +322,14 @@ def main(csv_file, input_column, output_column, task_column, output_file="result
                 executable_results.append(None)
                 stdout_results.append(f"Skipping row {idx} for task {task} as it has no code output to validate.")
                 continue
-            elif task == TaskCategory.TEST_GENERATION:
-                # For test generation, output might be a list of test cases
-                output_code = "\n".join(literal_eval(output).get(CODE_KEY_CATEGORY_MAP[task], []))
             else:
-                output_code = literal_eval(output).get(CODE_KEY_CATEGORY_MAP[task], "")
+                output = parse_object(output)
+
+                if task == TaskCategory.TEST_GENERATION:
+                    # For test generation, output might be a list of test cases
+                    output_code = "\n".join(output.get(CODE_KEY_CATEGORY_MAP[task], []))
+                else:
+                    output_code = output.get(CODE_KEY_CATEGORY_MAP[task], "")
 
             if not output_code.strip():
                 compiled_results.append(False)
@@ -248,22 +338,24 @@ def main(csv_file, input_column, output_column, task_column, output_file="result
                 continue
 
             if task == TaskCategory.CODE_COMPLETION:
-                prefix = literal_eval(input_data).get("prefix", "")
-                suffix = literal_eval(input_data).get("suffix", "")
-                code = f"{prefix}\n{output_code}\n{suffix}"
+                prefix = parse_object(input_data).get("prefix", "")
+                suffix = parse_object(input_data).get("suffix", "")
+                code = build_rust_main(f"{prefix}{output_code}{suffix}",None)
             elif task == TaskCategory.TEST_GENERATION:
-                code_to_test = literal_eval(input_data).get("code_to_test", "")
-                test_context = literal_eval(input_data).get("test_context", "")
-                code = build_rust_main(output_code,f"{code_context}\n{code_to_test}\n\n{test_context}")
+                code_to_test = parse_object(input_data).get("code_to_test", "")
+                code = build_rust_main(output_code,f"{code_context}\n{code_to_test}")
             elif task == TaskCategory.API_USAGE_PREDICTION:
-                current_code = literal_eval(input_data).get("code", "")
-                code = build_rust_main(output_code,f"{code_context}\n{current_code}")
+                current_code = parse_object(input_data).get("code", "")
+                code = build_rust_main(f"{current_code}\n{output_code}",f"{code_context}")
             else:
                 code = build_rust_main(output_code,code_context)
 
-            compiled, executable, stdout = check_with_docker(code)
+            crates = None if (args.autoparse_dependencies).lower()[0] == "t" else {crate: "*" for crate in output['dependencies']}
+            compiled, executable, stdout = check_with_docker(code, crates, force_replace_crates_to_hyphen=False,
+                                                             crate_name=crate_name
+                                                             )
 
-            # print(f"Code:\n{code}\n{'-'*40}")
+            print(f"Code:\n{code}\n{'-'*40}")
             print(f"Row {idx}: Compiled={compiled}, Executable={executable}")
             print('-'*80)
 
@@ -297,7 +389,7 @@ def check_alexey_data(csv_file, code_column, crates_column, output_file="result_
         try:
             print(f"Checking row {idx} inside Docker sandbox...")
             code = df.loc[idx, code_column]
-            crates_list = literal_eval(df.loc[idx, crates_column])
+            crates_list = parse_object(df.loc[idx, crates_column])
             crates = {crate: "*" for crate in crates_list}
      
             compiled, executable, stdout = check_with_docker(code, crates,
@@ -324,15 +416,15 @@ def check_alexey_data(csv_file, code_column, crates_column, output_file="result_
 
 
 if __name__ == "__main__":
-    # main(args.filepath,
-    #      task_column=args.task_column,
-    #      input_column=args.input_column,
-    #      output_column=args.output_column,
-    #      output_file=args.output_file
-    #      )
+    main(args.filepath,
+         task_column=args.task_column,
+         input_column=args.input_column,
+         output_column=args.output_column,
+         output_file=args.output_file
+         )
 
-    check_alexey_data(args.filepath, 
-                      code_column="checked_code", 
-                      crates_column="dependencies_to_add",
-                      output_file=args.output_file,
-                      )
+    # check_alexey_data(args.filepath, 
+    #                   code_column="checked_code", 
+    #                   crates_column="dependencies_to_add",
+    #                   output_file=args.output_file,
+    #                   )
