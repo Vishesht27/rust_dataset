@@ -113,19 +113,39 @@ You must return your response in the following JSON format:
 """
 }
 
+def parse_data_safely(data):
+    """Safely parse input/output data that might be JSON, literal_eval, or already parsed."""
+    if not isinstance(data, str):
+        return data  # Already parsed
+    
+    # Try JSON first (most common)
+    try:
+        return json.loads(data)
+    except:
+        pass
+    
+    # Try literal_eval (for Python dict/list strings)
+    try:
+        return literal_eval(data)
+    except:
+        pass
+    
+    # If both fail, return as string wrapped in dict
+    return {"raw_data": data}
+
 def create_validation_prompt(task_category, input_data, output_data):
     """Create a validation prompt for a specific task."""
     
     system_prompt = VALIDATION_PROMPTS[task_category]
     
     if task_category == TaskCategory.DOCSTRING_GENERATION:
-        input_dict = literal_eval(input_data) if isinstance(input_data, str) else input_data
-        output_dict = literal_eval(output_data) if isinstance(output_data, str) else output_data
+        input_dict = parse_data_safely(input_data)
+        output_dict = parse_data_safely(output_data)
         
         user_prompt = f"""
 **Rust Code:**
 ```rust
-{input_dict.get('code', '')}
+{input_dict.get('code', input_dict.get('raw_data', 'N/A'))}
 ```
 
 **Code Context (if any):**
@@ -134,19 +154,19 @@ def create_validation_prompt(task_category, input_data, output_data):
 ```
 
 **Generated Docstring:**
-{output_dict.get('docstring', '')}
+{output_dict.get('docstring', output_dict.get('raw_data', 'N/A'))}
 
 **Task:** Evaluate if this docstring is correct for the given Rust code.
 """
 
     elif task_category == TaskCategory.CODE_SUMMARIZATION:
-        input_dict = literal_eval(input_data) if isinstance(input_data, str) else input_data
-        output_dict = literal_eval(output_data) if isinstance(output_data, str) else output_data
+        input_dict = parse_data_safely(input_data)
+        output_dict = parse_data_safely(output_data)
         
         user_prompt = f"""
 **Rust Code:**
 ```rust
-{input_dict.get('code', '')}
+{input_dict.get('code', input_dict.get('raw_data', 'N/A'))}
 ```
 
 **Code Context (if any):**
@@ -155,19 +175,19 @@ def create_validation_prompt(task_category, input_data, output_data):
 ```
 
 **Generated Summary:**
-{output_dict.get('summary', '')}
+{output_dict.get('summary', output_dict.get('raw_data', 'N/A'))}
 
 **Task:** Evaluate if this summary is correct for the given Rust code.
 """
 
     elif task_category == TaskCategory.CODE_EXPLANATION:
-        input_dict = literal_eval(input_data) if isinstance(input_data, str) else input_data
-        output_dict = literal_eval(output_data) if isinstance(output_data, str) else output_data
+        input_dict = parse_data_safely(input_data)
+        output_dict = parse_data_safely(output_data)
         
         user_prompt = f"""
 **Rust Code:**
 ```rust
-{input_dict.get('code', '')}
+{input_dict.get('code', input_dict.get('raw_data', 'N/A'))}
 ```
 
 **Code Context (if any):**
@@ -176,19 +196,19 @@ def create_validation_prompt(task_category, input_data, output_data):
 ```
 
 **Generated Explanation:**
-{output_dict.get('explanation', '')}
+{output_dict.get('explanation', output_dict.get('raw_data', 'N/A'))}
 
 **Task:** Evaluate if this explanation is correct for the given Rust code.
 """
 
     elif task_category == TaskCategory.FUNCTION_NAMING:
-        input_dict = literal_eval(input_data) if isinstance(input_data, str) else input_data
-        output_dict = literal_eval(output_data) if isinstance(output_data, str) else output_data
+        input_dict = parse_data_safely(input_data)
+        output_dict = parse_data_safely(output_data)
         
         user_prompt = f"""
 **Function Implementation:**
 ```rust
-{input_dict.get('code', '')}
+{input_dict.get('code', input_dict.get('raw_data', 'N/A'))}
 ```
 
 **Code Context (if any):**
@@ -197,19 +217,19 @@ def create_validation_prompt(task_category, input_data, output_data):
 ```
 
 **Suggested Function Name:**
-{output_dict.get('function_name', '')}
+{output_dict.get('function_name', output_dict.get('raw_data', 'N/A'))}
 
 **Task:** Evaluate if this function name is appropriate for the given implementation.
 """
 
     elif task_category == TaskCategory.VARIABLE_NAMING:
-        input_dict = literal_eval(input_data) if isinstance(input_data, str) else input_data
-        output_dict = literal_eval(output_data) if isinstance(output_data, str) else output_data
+        input_dict = parse_data_safely(input_data)
+        output_dict = parse_data_safely(output_data)
         
         user_prompt = f"""
 **Code with Placeholder:**
 ```rust
-{input_dict.get('code', '')}
+{input_dict.get('code', input_dict.get('raw_data', 'N/A'))}
 ```
 
 **Code Context (if any):**
@@ -218,7 +238,7 @@ def create_validation_prompt(task_category, input_data, output_data):
 ```
 
 **Suggested Variable Name:**
-{output_dict.get('variable_name', '')}
+{output_dict.get('variable_name', output_dict.get('raw_data', 'N/A'))}
 
 **Task:** Evaluate if this variable name is appropriate for the given code context.
 """
