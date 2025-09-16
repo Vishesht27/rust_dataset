@@ -55,7 +55,7 @@
   "ddp_find_unused_parameters": false,
   "ddp_backend": "nccl",
   
-  "use_multi_gpu": false,
+  "use_multi_gpu": true,
   "use_wandb": false,
   "wandb_project": "qwen2.5-sft",
   "run_name": "qwen2.5-32b-sft",
