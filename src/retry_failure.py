@@ -11,15 +11,7 @@ from tqdm import tqdm
 import os
 import time
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('retry_failures.log'),
-        logging.StreamHandler()
-    ]
-)
+# Logging will be configured after argument parsing
 logger = logging.getLogger(__name__)
 
 parser = argparse.ArgumentParser(description="Retry failed LLM validations")
@@ -32,8 +24,20 @@ parser.add_argument("--failure_types", type=str, nargs='+',
                    default=["FAILED_AFTER", "TIMEOUT_ERROR", "RATE_LIMIT_ERROR", "CONNECTION_ERROR", "PROCESSING_ERROR"],
                    help="Types of failures to retry")
 parser.add_argument("--dry_run", action='store_true', help="Show what would be retried without actually doing it")
+parser.add_argument("--log_filename", type=str, default="retry_failures.log", help="Custom log filename for this run")
 
 args = parser.parse_args()
+
+# Setup logging with custom filename
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(args.log_filename),
+        logging.StreamHandler()
+    ],
+    force=True  # Override any existing configuration
+)
 
 def identify_failure_type(result_text):
     """Identify the type of failure from the result text."""

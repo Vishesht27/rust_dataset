@@ -14,15 +14,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from threading import Lock
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('llm_validation.log'),
-        logging.StreamHandler()
-    ]
-)
+# Logging will be configured after argument parsing
 logger = logging.getLogger(__name__)
 
 # Thread-safe counter for progress tracking
@@ -48,8 +40,20 @@ parser.add_argument("--checkpoint_every", type=int, default=10, help="Save check
 parser.add_argument("--retry_attempts", type=int, default=3, help="Number of retry attempts for failed API calls")
 parser.add_argument("--validate_all", action='store_true', help="Validate all samples instead of sampling")
 parser.add_argument("--max_samples_per_task", type=int, default=None, help="Maximum samples per task when using --validate_all")
+parser.add_argument("--log_filename", type=str, default="llm_validation.log", help="Custom log filename for this run")
 
 args = parser.parse_args()
+
+# Setup logging with custom filename
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler(args.log_filename),
+        logging.StreamHandler()
+    ],
+    force=True  # Override any existing configuration
+)
 
 # Define validation prompts for each non-code task
 VALIDATION_PROMPTS = {
