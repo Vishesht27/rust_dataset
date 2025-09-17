@@ -26,9 +26,9 @@ The pipeline consists of several scripts for different stages of data processing
 | `llm_validation_non_code.py` | LLM validation for non-code tasks | CSV dataset | Validated CSV with results |
 | `retry_failure.py` | Retry failed validations | Validation results CSV | Updated CSV with retries |
 | `code_validation.py` | Compile/test Rust code | CSV with code | CSV with compilation results |
-| `eval_data.py` | Evaluate and improve dataset quality | CSV dataset | Enhanced CSV |
-| `validation_analysis_non-code.py` | Analyze validation results | Validation results CSV | Analysis report |
-| `error_analysis.py` | Analyze compilation errors | Code validation results | Error statistics |
+| `eval_data.py` | Generate refinement of the hold-out validation dataset | CSV dataset | Enhanced CSV |
+| `validation_analysis_non-code.py` | Analyze validation results for non-code related samples | Validation results CSV | Analysis report |
+| `error_analysis.py` | Analyze compilation errors for code-related samples | Code validation results | Error statistics |
 
 ---
 
