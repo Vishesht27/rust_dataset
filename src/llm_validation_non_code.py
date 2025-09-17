@@ -13,6 +13,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import time
 from threading import Lock
+import re
 
 # Logging will be configured after argument parsing
 logger = logging.getLogger(__name__)
@@ -29,6 +30,41 @@ LLM_MODEL_MAPPING = {
     "gpt4": "openai/gpt-4o",
 }
 
+def identify_failure_type(result_text):
+    """Identify the type of failure from the result text."""
+    if pd.isna(result_text):
+        return "MISSING_RESULT"
+    
+    result_str = str(result_text)
+    
+    # Check for specific error patterns
+    error_patterns = {
+        "FAILED_AFTER": r"FAILED_AFTER_\d+_ATTEMPTS",
+        "TIMEOUT_ERROR": r"TIMEOUT_ERROR",
+        "RATE_LIMIT_ERROR": r"RATE_LIMIT_ERROR", 
+        "CONNECTION_ERROR": r"CONNECTION_ERROR",
+        "SERVER_ERROR": r"SERVER_ERROR",
+        "AUTH_ERROR": r"AUTH_ERROR",
+        "BAD_REQUEST_ERROR": r"BAD_REQUEST_ERROR",
+        "JSON_DECODE_ERROR": r"JSON_DECODE_ERROR",
+        "PROCESSING_ERROR": r"PROCESSING_ERROR",
+        "UNKNOWN_ERROR": r"UNKNOWN_ERROR"
+    }
+    
+    for error_type, pattern in error_patterns.items():
+        if re.search(pattern, result_str):
+            return error_type
+    
+    # Check for partial failures or malformed responses
+    if "ERROR" in result_str.upper():
+        return "GENERIC_ERROR"
+        
+    return "SUCCESS"
+
+def should_retry_failure(failure_type, retry_types):
+    """Determine if a failure type should be retried."""
+    return any(retry_pattern in failure_type for retry_pattern in retry_types)
+
 parser = argparse.ArgumentParser(description="LLM validation for non-code Rust dataset tasks.")
 parser.add_argument("--input_filepath", type=str, help="Input file path", required=True)
 parser.add_argument("--output_filepath", type=str, help="Output file path", required=True)
@@ -41,6 +77,10 @@ parser.add_argument("--retry_attempts", type=int, default=3, help="Number of ret
 parser.add_argument("--validate_all", action='store_true', help="Validate all samples instead of sampling")
 parser.add_argument("--max_samples_per_task", type=int, default=None, help="Maximum samples per task when using --validate_all")
 parser.add_argument("--log_filename", type=str, default="llm_validation.log", help="Custom log filename for this run")
+parser.add_argument("--retry_failed", action='store_true', help="Retry failed validations from previous runs")
+parser.add_argument("--failure_types", type=str, nargs='+', 
+                   default=["FAILED_AFTER", "TIMEOUT_ERROR", "RATE_LIMIT_ERROR", "CONNECTION_ERROR", "PROCESSING_ERROR"],
+                   help="Types of failures to retry when using --retry_failed")
 
 args = parser.parse_args()
 
@@ -501,8 +541,6 @@ def main():
     
     # Estimate processing time and cost
     estimated_time_minutes = (total_samples / args.max_workers) * 0.5  # Rough estimate: 30s per sample
-    # Estimate processing time and cost
-    estimated_time_minutes = (total_samples / args.max_workers) * 0.5  # Rough estimate: 30s per sample
     logger.info(f"Estimated processing time: {estimated_time_minutes:.1f} minutes with {args.max_workers} workers")
     logger.info(f"Using LLM model: {args.llm_model} with {args.max_workers} parallel workers")
     
@@ -519,7 +557,47 @@ def main():
         logger.info(f"Resuming from row {args.resume_from}")
         remaining_indices = list(range(args.resume_from, len(df_sampled)))
     else:
+        # Start with incomplete samples
         remaining_indices = [i for i in range(len(df_sampled)) if i not in completed_indices]
+        
+        # If retry_failed is enabled, also include failed samples
+        if args.retry_failed and 'llm_validation_result' in df_sampled.columns:
+            logger.info("=== RETRY FAILED MODE ENABLED ===")
+            
+            # Identify failed samples
+            failed_indices = []
+            for idx in range(len(df_sampled)):
+                if idx not in completed_indices:
+                    continue  # Already in remaining_indices
+                    
+                result = df_sampled.iloc[idx]['llm_validation_result']
+                failure_type = identify_failure_type(result)
+                
+                if failure_type != "SUCCESS" and should_retry_failure(failure_type, args.failure_types):
+                    failed_indices.append(idx)
+                    # Remove from completed_indices so it gets processed again
+                    completed_indices.discard(idx)
+            
+            # Add failed samples to remaining indices
+            remaining_indices.extend(failed_indices)
+            remaining_indices = sorted(list(set(remaining_indices)))  # Remove duplicates and sort
+            
+            if failed_indices:
+                logger.info(f"Found {len(failed_indices)} failed samples to retry")
+                logger.info(f"Failure types to retry: {args.failure_types}")
+                
+                # Show failure breakdown
+                failure_counts = {}
+                for idx in failed_indices:
+                    result = df_sampled.iloc[idx]['llm_validation_result']
+                    failure_type = identify_failure_type(result)
+                    failure_counts[failure_type] = failure_counts.get(failure_type, 0) + 1
+                
+                logger.info("Failure types being retried:")
+                for failure_type, count in failure_counts.items():
+                    logger.info(f"  {failure_type}: {count}")
+            else:
+                logger.info("No retryable failures found with current failure types")
     
     logger.info(f"Rows remaining to process: {len(remaining_indices)}")
     

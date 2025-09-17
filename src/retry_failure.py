@@ -14,7 +14,7 @@ import time
 # Logging will be configured after argument parsing
 logger = logging.getLogger(__name__)
 
-parser = argparse.ArgumentParser(description="Retry failed LLM validations")
+parser = argparse.ArgumentParser(description="[DEPRECATED] Retry failed LLM validations - Use 'llm_validation_non_code.py --retry_failed' instead")
 parser.add_argument("--input_filepath", type=str, required=True, help="CSV file with validation results")
 parser.add_argument("--output_filepath", type=str, required=True, help="Output CSV file") 
 parser.add_argument("--llm_model", type=str, choices=LLM_MODEL_MAPPING.keys(), default="claude", help="LLM model to use")
@@ -158,6 +158,13 @@ def retry_failed_validations(failed_df, retry_types, max_workers=3):
     return retry_results
 
 def main():
+    # DEPRECATION WARNING
+    logger.warning("=" * 80)
+    logger.warning("DEPRECATION WARNING: retry_failure.py is deprecated!")
+    logger.warning("Use 'llm_validation_non_code.py --retry_failed' instead for integrated retry functionality.")
+    logger.warning("This script will be removed in a future version.")
+    logger.warning("=" * 80)
+    
     # Load the validation results
     logger.info(f"Loading validation results from {args.input_filepath}")
     df = pd.read_csv(args.input_filepath)

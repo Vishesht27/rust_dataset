@@ -23,12 +23,13 @@ The pipeline consists of several scripts for different stages of data processing
 
 | Script | Purpose | Input | Output |
 |--------|---------|-------|--------|
-| `llm_validation_non_code.py` | LLM validation for non-code tasks | CSV dataset | Validated CSV with results |
-| `retry_failure.py` | Retry failed validations | Validation results CSV | Updated CSV with retries |
+| `llm_validation_non_code.py` | LLM validation for non-code tasks with built-in retry | CSV dataset | Validated CSV with results |
 | `code_validation.py` | Compile/test Rust code | CSV with code | CSV with compilation results |
 | `eval_data.py` | Generate refinement of the hold-out validation dataset | CSV dataset | Enhanced CSV |
 | `validation_analysis_non-code.py` | Analyze validation results for non-code related samples | Validation results CSV | Analysis report |
 | `error_analysis.py` | Analyze compilation errors for code-related samples | Code validation results | Error statistics |
+
+**Note**: `retry_failure.py` functionality has been integrated into `llm_validation_non_code.py` - use `--retry_failed` flag instead.
 
 ---
 
@@ -142,15 +143,17 @@ python llm_validation_non_code.py \
   --log_filename $(date +%Y%m%d_%H%M)_gemini_validation.log
 ```
 
-### 2. Retry Failed Validations (`retry_failure.py`)
+### 2. Automatic Retry Functionality (Built-in)
 
-Retries failed validations from previous runs.
+The main validation script now includes built-in retry functionality! Failed samples are automatically treated as remaining samples when you resume.
 
-#### Basic Usage
+#### Basic Retry Usage
 ```bash
-python retry_failure.py \
-  --input_filepath data/validated_results.csv \
-  --output_filepath data/retry_results.csv
+# Automatically retry failed validations from previous run
+python llm_validation_non_code.py \
+  --input_filepath data/input.csv \
+  --output_filepath data/results.csv \
+  --retry_failed
 ```
 
 #### Advanced Retry Options
@@ -158,42 +161,31 @@ python retry_failure.py \
 **Selective Failure Types:**
 ```bash
 # Retry only specific failure types
-python retry_failure.py \
-  --input_filepath data/results.csv \
-  --output_filepath data/retry_results.csv \
+python llm_validation_non_code.py \
+  --input_filepath data/input.csv \
+  --output_filepath data/results.csv \
+  --retry_failed \
   --failure_types TIMEOUT_ERROR RATE_LIMIT_ERROR
 
 # Retry all retryable failures (default)
-python retry_failure.py \
-  --input_filepath data/results.csv \
-  --output_filepath data/retry_results.csv \
+python llm_validation_non_code.py \
+  --input_filepath data/input.csv \
+  --output_filepath data/results.csv \
+  --retry_failed \
   --failure_types FAILED_AFTER TIMEOUT_ERROR RATE_LIMIT_ERROR CONNECTION_ERROR PROCESSING_ERROR
 ```
 
-**Retry Configuration:**
+**Combined with Other Options:**
 ```bash
-# More aggressive retry settings
-python retry_failure.py \
-  --input_filepath data/results.csv \
-  --output_filepath data/retry_results.csv \
-  --retry_attempts 10 \
-  --max_workers 1
-
-# Different model for retries
-python retry_failure.py \
-  --input_filepath data/claude_results.csv \
-  --output_filepath data/gemini_retry.csv \
+# Retry failures with different model and settings
+python llm_validation_non_code.py \
+  --input_filepath data/input.csv \
+  --output_filepath data/results.csv \
+  --retry_failed \
   --llm_model gemini \
+  --max_workers 2 \
+  --retry_attempts 5 \
   --log_filename retry_with_gemini.log
-```
-
-**Dry Run (Preview):**
-```bash
-# See what would be retried without actually doing it
-python retry_failure.py \
-  --input_filepath data/results.csv \
-  --output_filepath data/retry_results.csv \
-  --dry_run
 ```
 
 ---
@@ -299,7 +291,36 @@ python eval_data.py \
 
 ## Common Usage Patterns
 
-### Full Pipeline Example
+### Improved Workflow with Built-in Retry
+
+The retry functionality is now integrated, making the workflow much simpler:
+
+```bash
+# 1. Run initial validation
+python llm_validation_non_code.py \
+  --input_filepath data/rust_dataset_100k.csv \
+  --output_filepath data/validation_results.csv \
+  --nsamples_per_task 10 \
+  --log_filename validation_run.log
+
+# 2. If interrupted or some samples failed, simply re-run with retry flag
+# This will automatically:
+# - Resume from checkpoint (incomplete samples)
+# - Retry failed samples that match failure_types
+python llm_validation_non_code.py \
+  --input_filepath data/rust_dataset_100k.csv \
+  --output_filepath data/validation_results.csv \
+  --retry_failed \
+  --log_filename retry_run.log
+
+# 3. Analyze final results
+python validation_analysis_non-code.py \
+  --filepath data/validation_results.csv \
+  --save_plots \
+  --output_summary final_analysis.txt
+```
+
+### Full Pipeline Example (Legacy)
 ```bash
 # 1. Initial validation with small sample
 python llm_validation_non_code.py \
@@ -314,10 +335,11 @@ python validation_analysis_non-code.py \
   --save_plots \
   --output_summary initial_analysis.txt
 
-# 3. Retry any failures
-python retry_failure.py \
-  --input_filepath data/initial_validation.csv \
-  --output_filepath data/retry_results.csv \
+# 3. Retry any failures (now built-in)
+python llm_validation_non_code.py \
+  --input_filepath data/rust_dataset_100k.csv \
+  --output_filepath data/initial_validation.csv \
+  --retry_failed \
   --log_filename retry_run.log
 
 # 4. Full validation if initial looks good
