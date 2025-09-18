@@ -38,7 +38,7 @@ CODE_EXPLANATION_PAIRS = [
     ),
     (
         "Can you explain how this Rust code works?\n\n```rust\n{code}\n```",
-        "This code {explanation}"
+        "{explanation}"
     ),
 ]
 
@@ -49,7 +49,7 @@ DOCSTRING_GENERATION_PAIRS = [
         "Here's the docstring:\n\n```rust\n{docstring}\n```"
     ),
     (
-        "Write documentation comments for this Rust code:\n\n```rust\n{code}\n```",
+        "Write docstring for this Rust code:\n\n```rust\n{code}\n```",
         "```rust\n{docstring}\n```"
     ),
     (
@@ -102,7 +102,7 @@ CODE_SUMMARIZATION_PAIRS = [
     ),
     (
         "Provide a brief summary of this Rust code:\n\n```rust\n{code}\n```",
-        "This code {summary}"
+        "{summary}"
     ),
 ]
 
