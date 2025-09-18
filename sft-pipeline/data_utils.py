@@ -322,21 +322,7 @@ class DatasetValidator:
         if "messages" in example:
             return example["messages"]
         
-        # Format 2: Standard instruction-response format
-        elif "instruction" in example and "response" in example:
-            return [
-                {"role": "user", "content": example["instruction"]},
-                {"role": "assistant", "content": example["response"]}
-            ]
-        
-        # Format 3: Prompt-completion format
-        elif "prompt" in example and "completion" in example:
-            return [
-                {"role": "user", "content": example["prompt"]},
-                {"role": "assistant", "content": example["completion"]}
-            ]
-        
-        # Format 4: Rust dataset format (input_data, output_data, task_category)
+        # Format 2: Rust dataset format (input_data, output_data, task_category)
         elif "input_data" in example and "output_data" in example:
             try:
                 return parse_rust_dataset_format(
@@ -348,9 +334,23 @@ class DatasetValidator:
                 logger.warning(f"Failed to parse Rust dataset format: {e}")
                 return None
         
-        # Format 5: Conversation field
+        # Format 3: Conversation field
         elif "conversation" in example:
             return example["conversation"]
+        
+        # Format 4: Standard instruction-response format
+        elif "instruction" in example and "response" in example:
+            return [
+                {"role": "user", "content": example["instruction"]},
+                {"role": "assistant", "content": example["response"]}
+            ]
+        
+        # Format 5: Prompt-completion format
+        elif "prompt" in example and "completion" in example:
+            return [
+                {"role": "user", "content": example["prompt"]},
+                {"role": "assistant", "content": example["completion"]}
+            ]
         
         else:
             return None
