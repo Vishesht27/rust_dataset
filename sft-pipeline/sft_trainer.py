@@ -27,6 +27,7 @@ from peft import LoraConfig, get_peft_model, TaskType
 import wandb
 from accelerate import Accelerator
 from accelerate.utils import set_seed as accelerate_set_seed
+from data_utils import parse_rust_dataset_format
 
 # Set up logging
 logging.basicConfig(level=logging.INFO)
@@ -148,20 +149,13 @@ class SFTTrainerPipeline:
                         {"role": "assistant", "content": example["completion"]}
                     ]
                 elif "input_data" in example and "output_data" in example:
-                    # Handle CSV format with input_data/output_data - Comprehensive parser
-                    import json
-                    try:
-                        input_json = json.loads(example["input_data"])
-                        output_json = json.loads(example["output_data"])
-                        task_category = example.get("task_category", "unknown")
-                        
-                        # Parse based on format patterns
-                        messages = self._parse_rust_dataset_format(input_json, output_json, task_category)
-                        if not messages:
-                            return {"text": ""}
-                            
-                    except (json.JSONDecodeError, KeyError) as e:
-                        logger.warning(f"Failed to parse CSV data: {e}")
+                    # Handle Rust dataset format using centralized parser from data_utils
+                    messages = parse_rust_dataset_format(
+                        example["input_data"],
+                        example["output_data"], 
+                        example.get("task_category", "unknown")
+                    )
+                    if not messages:
                         return {"text": ""}
                 else:
                     logger.warning(f"Unknown data format in example: {example.keys()}")
@@ -190,196 +184,6 @@ class SFTTrainerPipeline:
         logger.info(f"Formatted dataset has {len(formatted_dataset)} examples")
         return formatted_dataset
     
-    def _parse_rust_dataset_format(self, input_json: Dict, output_json: Dict, task_category: str) -> Optional[List[Dict[str, str]]]:
-        """
-        Comprehensive parser for all Rust dataset formats
-        
-        Handles all major input/output format combinations:
-        - ('code', 'code_context') -> ('commented_code',), ('explanation',), etc.
-        - ('code_before', 'code_context') -> ('code_after', 'rationale')
-        - ('code_context', 'description', 'title') -> ('code',)
-        - ('code_context', 'query') -> ('code_snippet',)
-        - ('code_context', 'code_to_test', 'test_context') -> ('test_cases',)
-        - ('buggy_code', 'code_context') -> ('fixed_code', 'bug_description')
-        - ('prefix', 'suffix') -> ('completion',)
-        And many more combinations...
-        """
-        try:
-            # Determine input format and create user prompt
-            user_prompt = self._create_user_prompt(input_json, task_category)
-            if not user_prompt:
-                return None
-                
-            # Determine output format and create assistant response  
-            assistant_response = self._create_assistant_response(output_json, task_category)
-            if not assistant_response:
-                return None
-                
-            return [
-                {"role": "user", "content": user_prompt},
-                {"role": "assistant", "content": assistant_response}
-            ]
-            
-        except Exception as e:
-            logger.warning(f"Failed to parse format for task {task_category}: {e}")
-            return None
-    
-    def _create_user_prompt(self, input_json: Dict, task_category: str) -> Optional[str]:
-        """Create user prompt based on input format and task category"""
-        input_keys = tuple(sorted(input_json.keys()))
-        
-        # Handle different input format combinations
-        if input_keys == ('code', 'code_context'):
-            code = input_json.get('code', '')
-            context = input_json.get('code_context', '')
-            
-            if task_category == 'comment_generation':
-                return f"Add helpful comments to this Rust code:\n\n```rust\n{code}\n```\n\nContext:\n```rust\n{context}\n```"
-            elif task_category == 'code_explanation':
-                return f"Explain what this Rust code does:\n\n```rust\n{code}\n```\n\nContext:\n```rust\n{context}\n```"
-            elif task_category == 'docstring_generation':
-                return f"Generate documentation for this Rust code:\n\n```rust\n{code}\n```\n\nContext:\n```rust\n{context}\n```"
-            elif task_category in ['code_summarization', 'code_review']:
-                return f"Review and summarize this Rust code:\n\n```rust\n{code}\n```\n\nContext:\n```rust\n{context}\n```"
-            else:
-                return f"Help me with this Rust code:\n\n```rust\n{code}\n```\n\nContext:\n```rust\n{context}\n```"
-                
-        elif input_keys == ('code_before', 'code_context'):
-            code_before = input_json.get('code_before', '')
-            context = input_json.get('code_context', '')
-            return f"Refactor this Rust code to improve it:\n\n```rust\n{code_before}\n```\n\nContext:\n```rust\n{context}\n```"
-            
-        elif input_keys == ('code_context', 'description', 'title'):
-            title = input_json.get('title', '')
-            description = input_json.get('description', '')
-            context = input_json.get('code_context', '')
-            return f"**{title}**\n\n{description}\n\nAvailable imports/context:\n```rust\n{context}\n```"
-            
-        elif input_keys == ('code_context', 'query'):
-            query = input_json.get('query', '')
-            context = input_json.get('code_context')
-            if context:
-                return f"{query}\n\nContext:\n```rust\n{context}\n```"
-            else:
-                return query
-                
-        elif input_keys == ('code_context', 'code_to_test', 'test_context'):
-            code_to_test = input_json.get('code_to_test', '')
-            context = input_json.get('code_context', '')
-            test_context = input_json.get('test_context')
-            prompt = f"Generate comprehensive unit tests for this Rust code:\n\n```rust\n{code_to_test}\n```"
-            if context:
-                prompt += f"\n\nContext:\n```rust\n{context}\n```"
-            if test_context:
-                prompt += f"\n\nTest context: {test_context}"
-            return prompt
-            
-        elif input_keys == ('buggy_code', 'code_context'):
-            buggy_code = input_json.get('buggy_code', '')
-            context = input_json.get('code_context', '')
-            return f"Find and fix the bug in this Rust code:\n\n```rust\n{buggy_code}\n```\n\nContext:\n```rust\n{context}\n```"
-            
-        elif input_keys == ('prefix', 'suffix'):
-            prefix = input_json.get('prefix', '')
-            suffix = input_json.get('suffix', '')
-            return f"Complete this Rust code:\n\n```rust\n{prefix}____{suffix}\n```"
-            
-        # Handle other combinations
-        elif 'query' in input_json:
-            return input_json['query']
-        elif 'title' in input_json and 'description' in input_json:
-            return f"{input_json['title']}: {input_json['description']}"
-        elif 'title' in input_json:
-            return input_json['title']
-        elif 'description' in input_json:
-            return input_json['description']
-        elif 'code' in input_json:
-            return f"Help me with this Rust code:\n\n```rust\n{input_json['code']}\n```"
-        
-        return None
-    
-    def _create_assistant_response(self, output_json: Dict, task_category: str) -> Optional[str]:
-        """Create assistant response based on output format and task category"""
-        output_keys = tuple(sorted(output_json.keys()))
-        
-        # Handle different output format combinations
-        if output_keys == ('code_after', 'rationale'):
-            code_after = output_json.get('code_after', '')
-            rationale = output_json.get('rationale', '')
-            return f"{rationale}\n\nHere's the improved code:\n\n```rust\n{code_after}\n```"
-            
-        elif output_keys == ('docstring',):
-            docstring = output_json.get('docstring', '')
-            return f"Here's the documentation:\n\n```rust\n{docstring}\n```"
-            
-        elif output_keys == ('explanation',):
-            explanation = output_json.get('explanation', '')
-            return explanation
-            
-        elif output_keys == ('commented_code',):
-            commented_code = output_json.get('commented_code', '')
-            return f"Here's the code with helpful comments:\n\n```rust\n{commented_code}\n```"
-            
-        elif output_keys == ('code',):
-            code = output_json.get('code', '')
-            return f"Here's the solution:\n\n```rust\n{code}\n```"
-            
-        elif output_keys == ('code_snippet',):
-            code_snippet = output_json.get('code_snippet', '')
-            return f"```rust\n{code_snippet}\n```"
-            
-        elif output_keys == ('test_cases',):
-            test_cases = output_json.get('test_cases', [])
-            if isinstance(test_cases, list):
-                formatted_tests = '\n\n'.join(test_cases)
-                return f"Here are comprehensive unit tests:\n\n```rust\n{formatted_tests}\n```"
-            else:
-                return f"Here are the unit tests:\n\n```rust\n{test_cases}\n```"
-                
-        elif output_keys == ('variable_name',):
-            var_name = output_json.get('variable_name', '')
-            return f"A good variable name would be: `{var_name}`"
-            
-        elif output_keys == ('function_name',):
-            func_name = output_json.get('function_name', '')
-            return f"A good function name would be: `{func_name}`"
-            
-        elif output_keys == ('bug_description', 'fixed_code'):
-            bug_desc = output_json.get('bug_description', '')
-            fixed_code = output_json.get('fixed_code', '')
-            return f"**Bug Description:**\n{bug_desc}\n\n**Fixed Code:**\n```rust\n{fixed_code}\n```"
-            
-        elif output_keys == ('code_after', 'review_comment'):
-            code_after = output_json.get('code_after', '')
-            review_comment = output_json.get('review_comment', '')
-            return f"**Review Comment:**\n{review_comment}\n\n**Improved Code:**\n```rust\n{code_after}\n```"
-            
-        elif output_keys == ('summary',):
-            summary = output_json.get('summary', '')
-            return f"**Summary:**\n{summary}"
-            
-        elif output_keys == ('completion',):
-            completion = output_json.get('completion', '')
-            return completion
-            
-        elif output_keys == ('next_api_call',):
-            next_api = output_json.get('next_api_call', '')
-            return f"Next API call: `{next_api}`"
-        
-        # Fallback for other combinations
-        elif 'code' in output_json:
-            return f"```rust\n{output_json['code']}\n```"
-        elif 'code_snippet' in output_json:
-            return f"```rust\n{output_json['code_snippet']}\n```"
-        elif 'code_after' in output_json:
-            return f"```rust\n{output_json['code_after']}\n```"
-        elif 'explanation' in output_json:
-            return output_json['explanation']
-        elif 'docstring' in output_json:
-            return f"```rust\n{output_json['docstring']}\n```"
-        
-        return None
-        
     def _fallback_format(self, messages: List[Dict[str, str]]) -> str:
         """Fallback formatting when chat template fails"""
         formatted_parts = []

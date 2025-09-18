@@ -66,7 +66,14 @@ python train.py --config configs/training_config.json --create_sample
 
 ### 4. Validate Your Dataset
 ```bash
+# Quick validation (recommended before training)
 python train.py --config configs/training_config.json --validate_only
+
+# Dry run - validate config and dataset without training
+python train.py --config configs/training_config.json --dry_run
+
+# Detailed parser validation with examples - for Rust dataset
+python ../validate_parser.py --sample-size 1000 --show-examples
 ```
 
 ## 📊 Dataset Format
@@ -86,6 +93,30 @@ Your dataset should be in JSONL format with the following structure:
 ### Alternative Formats Supported:
 - **CSV**: With `instruction` and `response` columns
 - **JSON**: With `prompt` and `completion` fields
+- **Rust Dataset**: With `input_data`, `output_data`, and `task_category` columns (supports all 15 task categories)
+
+### Rust Dataset Support:
+This pipeline includes comprehensive support for Rust programming datasets with 15 different task categories:
+
+| Task Category | Examples | Description |
+|---------------|----------|-------------|
+| `docstring_generation` | 9,921 | Generate documentation for Rust code |
+| `code_explanation` | 8,249 | Explain what Rust code does |
+| `comment_generation` | 8,201 | Add helpful comments to code |
+| `code_generation` | 8,102 | Generate Rust code from descriptions |
+| `code_search` | 7,981 | Find relevant code snippets |
+| `code_summarization` | 7,179 | Summarize Rust code functionality |
+| `code_review` | 7,137 | Review and improve code |
+| `test_generation` | 6,247 | Generate unit tests |
+| `code_refactoring` | 6,147 | Refactor code for improvements |
+| `variable_naming` | 5,925 | Suggest variable names |
+| `function_naming` | 5,828 | Suggest function names |
+| `api_usage_prediction` | 5,619 | Predict next API calls |
+| `bug_detection` | 5,059 | Find and fix bugs |
+| `code_optimization` | 4,419 | Optimize code performance |
+| `code_completion` | 3,986 | Complete partial code |
+
+**Total: 100,000 examples** across all categories with **100% parser coverage**.
 
 ## ⚙️ Configuration
 
@@ -214,9 +245,17 @@ print(stats)
    - Use `accelerate config` to configure your setup
 
 3. **Dataset Format Errors**:
-   - Use `--validate_only` to check your dataset
-   - Ensure proper JSON structure
+   - Use `--validate_only` to check your dataset before training
+   - Use `--dry_run` for complete validation (config + dataset)
+   - For Rust datasets: Use `python ../validate_parser.py` to validate parsing
+   - Ensure proper JSON structure in `input_data` and `output_data` fields
    - Check for empty or malformed examples
+
+4. **Parser Validation for Rust Dataset**:
+   - **Quick validation**: `python train.py --config configs/training_config.json --validate_only`
+   - **Full validation**: `python ../validate_parser.py --sample-size 5000 --show-examples`
+   - **Comprehensive testing**: `python ../validate_parser.py --full-coverage` (tests entire dataset)
+   - **Expected result**: 100% success rate across all task categories
 
 ### Performance Tips:
 
