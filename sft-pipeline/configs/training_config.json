@@ -1,22 +1,22 @@
 {
-  "model_name": "google/gemma-3-1b-it",
-  "dataset_path": "./data/Rust_dataset - rust_dataset.csv",
+  "model_name": "Qwen/Qwen2.5-3B",
+  "dataset_path": "./data/rust_dataset_100k.csv",
   "dataset_format": "csv",
-  "output_dir": "./outputs/gemma-1b-sft",
+  "output_dir": "./outputs/qwen-sft",
   
   "per_device_train_batch_size": 1,
   "per_device_eval_batch_size": 1,
   "gradient_accumulation_steps": 2,
   "learning_rate": 2e-5,
-  "num_train_epochs": 3,
-  "max_steps": -1,
-  "warmup_steps": 100,
+  "num_train_epochs": 2,
+  "max_steps": 20,
+  "warmup_steps": 2,
   "max_seq_length": 2048,
   "packing": true,
   
-  "logging_steps": 10,
-  "save_steps": 500,
-  "eval_steps": 500,
+  "logging_steps": 2,
+  "save_steps": 10,
+  "eval_steps": 10,
   "evaluation_strategy": "steps",
   "save_strategy": "steps",
   "load_best_model_at_end": true,
@@ -56,9 +56,9 @@
   "ddp_backend": "nccl",
   
   "use_multi_gpu": true,
-  "use_wandb": false,
-  "wandb_project": "qwen2.5-sft",
-  "run_name": "qwen2.5-32b-sft",
+  "use_wandb": true,
+  "wandb_project": "sft-pipeline-complete-test",
+  "run_name": "complete-test-run",
   
   "push_to_hub": false,
   "hub_model_id": null,
@@ -66,7 +66,7 @@
   
   "seed": 42,
   "data_seed": 42,
-  "report_to": "none",
+  "report_to": "wandb",
   "gradient_checkpointing": true,
   "dataloader_pin_memory": true
 }

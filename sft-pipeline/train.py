@@ -140,7 +140,7 @@ def main():
             tokenizer = AutoTokenizer.from_pretrained(config["model_name"], trust_remote_code=True)
             
             processor = DatasetProcessor(tokenizer)
-            dataset = processor.load_dataset_from_file(config["dataset_path"])
+            dataset = processor.load_dataset_from_file(config["dataset_path"], config.get("dataset_format", "csv"))
             
             validator = DatasetValidator()
             stats = validator.validate_dataset(dataset)
