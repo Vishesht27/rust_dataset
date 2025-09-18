@@ -7,8 +7,7 @@ This file contains paired prompt and response format tuples to ensure consistenc
 import random
 from typing import Dict, List, Tuple
 
-# Set random seed for reproducibility (will be overridden by main script)
-random.seed(42)
+# Random seed will be set by the main training script via set_random_seed()
 
 # Comment Generation: (prompt_template, response_template)
 COMMENT_GENERATION_PAIRS = [
