@@ -6,11 +6,13 @@ Handles dataset loading, preprocessing, and formatting
 
 import json
 import logging
+import random
 from typing import Dict, List, Optional, Union, Any
 from pathlib import Path
 import pandas as pd
 from datasets import Dataset, load_dataset
 from transformers import AutoTokenizer
+from prompts_and_responses import format_prompt_response_pair, add_context_to_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -32,14 +34,9 @@ def parse_rust_dataset_format(input_data: str, output_data: str, task_category: 
         input_json = json.loads(input_data)
         output_json = json.loads(output_data)
         
-        # Create user prompt based on task category and available input fields
-        user_prompt = _create_task_based_user_prompt(input_json, task_category)
-        if not user_prompt:
-            return None
-            
-        # Create assistant response based on task category and available output fields
-        assistant_response = _create_task_based_assistant_response(output_json, task_category)
-        if not assistant_response:
+        # Use paired prompt-response system
+        user_prompt, assistant_response = _create_paired_prompt_response(input_json, output_json, task_category)
+        if not user_prompt or not assistant_response:
             return None
             
         return [
@@ -52,441 +49,133 @@ def parse_rust_dataset_format(input_data: str, output_data: str, task_category: 
         return None
 
 
-def _create_task_based_user_prompt(input_json: Dict, task_category: str) -> Optional[str]:
-    """Create user prompt based on task category, intelligently using available input fields"""
-    
-    # Task-specific prompt creation strategies
-    if task_category == 'comment_generation':
-        return _create_comment_generation_prompt(input_json)
-    elif task_category == 'code_explanation':
-        return _create_code_explanation_prompt(input_json)
-    elif task_category == 'docstring_generation':
-        return _create_docstring_generation_prompt(input_json)
-    elif task_category == 'code_generation':
-        return _create_code_generation_prompt(input_json)
-    elif task_category == 'code_search':
-        return _create_code_search_prompt(input_json)
-    elif task_category == 'code_summarization':
-        return _create_code_summarization_prompt(input_json)
-    elif task_category == 'code_review':
-        return _create_code_review_prompt(input_json)
-    elif task_category == 'test_generation':
-        return _create_test_generation_prompt(input_json)
-    elif task_category == 'code_refactoring':
-        return _create_code_refactoring_prompt(input_json)
-    elif task_category == 'variable_naming':
-        return _create_variable_naming_prompt(input_json)
-    elif task_category == 'function_naming':
-        return _create_function_naming_prompt(input_json)
-    elif task_category == 'api_usage_prediction':
-        return _create_api_usage_prompt(input_json)
-    elif task_category == 'bug_detection':
-        return _create_bug_detection_prompt(input_json)
-    elif task_category == 'code_optimization':
-        return _create_code_optimization_prompt(input_json)
-    elif task_category == 'code_completion':
-        return _create_code_completion_prompt(input_json)
-    else:
-        # Fallback for unknown task categories
-        return _create_generic_prompt(input_json)
-
-
-def _create_task_based_assistant_response(output_json: Dict, task_category: str) -> Optional[str]:
-    """Create assistant response based on task category, intelligently using available output fields"""
-    
-    # Task-specific response creation strategies
-    if task_category == 'comment_generation':
-        return _create_comment_generation_response(output_json)
-    elif task_category == 'code_explanation':
-        return _create_code_explanation_response(output_json)
-    elif task_category == 'docstring_generation':
-        return _create_docstring_generation_response(output_json)
-    elif task_category == 'code_generation':
-        return _create_code_generation_response(output_json)
-    elif task_category == 'code_search':
-        return _create_code_search_response(output_json)
-    elif task_category == 'code_summarization':
-        return _create_code_summarization_response(output_json)
-    elif task_category == 'code_review':
-        return _create_code_review_response(output_json)
-    elif task_category == 'test_generation':
-        return _create_test_generation_response(output_json)
-    elif task_category == 'code_refactoring':
-        return _create_code_refactoring_response(output_json)
-    elif task_category == 'variable_naming':
-        return _create_variable_naming_response(output_json)
-    elif task_category == 'function_naming':
-        return _create_function_naming_response(output_json)
-    elif task_category == 'api_usage_prediction':
-        return _create_api_usage_response(output_json)
-    elif task_category == 'bug_detection':
-        return _create_bug_detection_response(output_json)
-    elif task_category == 'code_optimization':
-        return _create_code_optimization_response(output_json)
-    elif task_category == 'code_completion':
-        return _create_code_completion_response(output_json)
-    else:
-        # Fallback for unknown task categories
-        return _create_generic_response(output_json)
-
-
-# Task-specific prompt creation functions
-def _create_comment_generation_prompt(input_json: Dict) -> str:
-    """Create prompt for comment generation tasks"""
-    code = input_json.get('code', '')
-    context = input_json.get('code_context', '')
-    
-    prompt = "Add helpful comments to this Rust code:\n\n```rust\n" + code + "\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    return prompt
-
-
-def _create_code_explanation_prompt(input_json: Dict) -> str:
-    """Create prompt for code explanation tasks"""
-    code = input_json.get('code', '')
-    context = input_json.get('code_context', '')
-    
-    prompt = "Explain what this Rust code does:\n\n```rust\n" + code + "\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    return prompt
-
-
-def _create_docstring_generation_prompt(input_json: Dict) -> str:
-    """Create prompt for docstring generation tasks"""
-    code = input_json.get('code', '')
-    context = input_json.get('code_context', '')
-    
-    prompt = "Generate documentation for this Rust code:\n\n```rust\n" + code + "\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    return prompt
-
-
-def _create_code_generation_prompt(input_json: Dict) -> str:
-    """Create prompt for code generation tasks"""
-    if 'title' in input_json and 'description' in input_json:
-        title = input_json.get('title', '')
-        description = input_json.get('description', '')
-        context = input_json.get('code_context', '')
+def _create_paired_prompt_response(input_json: Dict, output_json: Dict, task_category: str) -> tuple[Optional[str], Optional[str]]:
+    """Create paired prompt and response using the new prompt-response system"""
+    try:
+        # Prepare variables for prompt formatting
+        prompt_vars = {}
+        response_vars = {}
         
-        prompt = f"**{title}**\n\n{description}"
-        if context:
-            prompt += f"\n\nAvailable imports/context:\n```rust\n{context}\n```"
-        return prompt
-    else:
-        return _create_generic_prompt(input_json)
-
-
-def _create_code_search_prompt(input_json: Dict) -> str:
-    """Create prompt for code search tasks"""
-    query = input_json.get('query', '')
-    context = input_json.get('code_context')
-    
-    if context:
-        return f"{query}\n\nContext:\n```rust\n{context}\n```"
-    else:
-        return query
-
-
-def _create_code_summarization_prompt(input_json: Dict) -> str:
-    """Create prompt for code summarization tasks"""
-    code = input_json.get('code', '')
-    context = input_json.get('code_context', '')
-    
-    prompt = "Summarize this Rust code:\n\n```rust\n" + code + "\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    return prompt
-
-
-def _create_code_review_prompt(input_json: Dict) -> str:
-    """Create prompt for code review tasks"""
-    code = input_json.get('code', '')
-    context = input_json.get('code_context', '')
-    
-    prompt = "Review this Rust code:\n\n```rust\n" + code + "\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    return prompt
-
-
-def _create_test_generation_prompt(input_json: Dict) -> str:
-    """Create prompt for test generation tasks"""
-    code_to_test = input_json.get('code_to_test', '')
-    context = input_json.get('code_context', '')
-    test_context = input_json.get('test_context')
-    
-    prompt = f"Generate comprehensive unit tests for this Rust code:\n\n```rust\n{code_to_test}\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    if test_context:
-        prompt += f"\n\nTest context: {test_context}"
-    return prompt
-
-
-def _create_code_refactoring_prompt(input_json: Dict) -> str:
-    """Create prompt for code refactoring tasks"""
-    code_before = input_json.get('code_before', input_json.get('code', ''))
-    context = input_json.get('code_context', '')
-    
-    prompt = f"Refactor this Rust code to improve it:\n\n```rust\n{code_before}\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    return prompt
-
-
-def _create_variable_naming_prompt(input_json: Dict) -> str:
-    """Create prompt for variable naming tasks"""
-    code = input_json.get('code', '')
-    context = input_json.get('code_context', '')
-    
-    prompt = f"Suggest a good variable name for this Rust code:\n\n```rust\n{code}\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    return prompt
-
-
-def _create_function_naming_prompt(input_json: Dict) -> str:
-    """Create prompt for function naming tasks"""
-    code = input_json.get('code', '')
-    context = input_json.get('code_context', '')
-    
-    prompt = f"Suggest a good function name for this Rust code:\n\n```rust\n{code}\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    return prompt
-
-
-def _create_api_usage_prompt(input_json: Dict) -> str:
-    """Create prompt for API usage prediction tasks"""
-    code = input_json.get('code', '')
-    context = input_json.get('code_context', '')
-    
-    prompt = f"What API call should come next in this Rust code?\n\n```rust\n{code}\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    return prompt
-
-
-def _create_bug_detection_prompt(input_json: Dict) -> str:
-    """Create prompt for bug detection tasks"""
-    buggy_code = input_json.get('buggy_code', input_json.get('code', ''))
-    context = input_json.get('code_context', '')
-    
-    prompt = f"Find and fix the bug in this Rust code:\n\n```rust\n{buggy_code}\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    return prompt
-
-
-def _create_code_optimization_prompt(input_json: Dict) -> str:
-    """Create prompt for code optimization tasks"""
-    code = input_json.get('code', input_json.get('code_before', ''))
-    context = input_json.get('code_context', '')
-    
-    prompt = f"Optimize this Rust code for better performance:\n\n```rust\n{code}\n```"
-    if context:
-        prompt += f"\n\nContext:\n```rust\n{context}\n```"
-    return prompt
-
-
-def _create_code_completion_prompt(input_json: Dict) -> str:
-    """Create prompt for code completion tasks"""
-    prefix = input_json.get('prefix', '')
-    suffix = input_json.get('suffix', '')
-    
-    return f"Complete this Rust code:\n\n```rust\n{prefix}____{suffix}\n```"
-
-
-def _create_generic_prompt(input_json: Dict) -> str:
-    """Generic prompt creation for unknown formats"""
-    if 'query' in input_json:
-        return input_json['query']
-    elif 'title' in input_json and 'description' in input_json:
-        return f"{input_json['title']}: {input_json['description']}"
-    elif 'title' in input_json:
-        return input_json['title']
-    elif 'description' in input_json:
-        return input_json['description']
-    elif 'code' in input_json:
-        return f"Help me with this Rust code:\n\n```rust\n{input_json['code']}\n```"
-    else:
-        return "Help me with this Rust programming task."
-
-
-# Task-specific response creation functions
-def _create_comment_generation_response(output_json: Dict) -> str:
-    """Create response for comment generation tasks"""
-    if 'commented_code' in output_json:
-        commented_code = output_json['commented_code']
-        return f"Here's the code with helpful comments:\n\n```rust\n{commented_code}\n```"
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_code_explanation_response(output_json: Dict) -> str:
-    """Create response for code explanation tasks"""
-    if 'explanation' in output_json:
-        return output_json['explanation']
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_docstring_generation_response(output_json: Dict) -> str:
-    """Create response for docstring generation tasks"""
-    if 'docstring' in output_json:
-        docstring = output_json['docstring']
-        return f"Here's the documentation:\n\n```rust\n{docstring}\n```"
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_code_generation_response(output_json: Dict) -> str:
-    """Create response for code generation tasks"""
-    if 'code' in output_json:
-        code = output_json['code']
-        return f"Here's the solution:\n\n```rust\n{code}\n```"
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_code_search_response(output_json: Dict) -> str:
-    """Create response for code search tasks"""
-    if 'code_snippet' in output_json:
-        code_snippet = output_json['code_snippet']
-        return f"```rust\n{code_snippet}\n```"
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_code_summarization_response(output_json: Dict) -> str:
-    """Create response for code summarization tasks"""
-    if 'summary' in output_json:
-        summary = output_json['summary']
-        return f"**Summary:**\n{summary}"
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_code_review_response(output_json: Dict) -> str:
-    """Create response for code review tasks"""
-    if 'code_after' in output_json and 'review_comment' in output_json:
-        code_after = output_json['code_after']
-        review_comment = output_json['review_comment']
-        return f"**Review Comment:**\n{review_comment}\n\n**Improved Code:**\n```rust\n{code_after}\n```"
-    elif 'review_comment' in output_json:
-        return output_json['review_comment']
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_test_generation_response(output_json: Dict) -> str:
-    """Create response for test generation tasks"""
-    if 'test_cases' in output_json:
-        test_cases = output_json['test_cases']
-        if isinstance(test_cases, list):
-            formatted_tests = '\n\n'.join(test_cases)
-            return f"Here are comprehensive unit tests:\n\n```rust\n{formatted_tests}\n```"
+        # Common input variables
+        if 'code' in input_json:
+            prompt_vars['code'] = input_json['code']
+        if 'code_context' in input_json:
+            context = input_json['code_context']
         else:
-            return f"Here are the unit tests:\n\n```rust\n{test_cases}\n```"
-    else:
-        return _create_generic_response(output_json)
+            context = ''
+            
+        # Task-specific variable mapping
+        if task_category == 'comment_generation':
+            if 'commented_code' in output_json:
+                response_vars['commented_code'] = output_json['commented_code']
+        
+        elif task_category == 'code_explanation':
+            if 'explanation' in output_json:
+                response_vars['explanation'] = output_json['explanation']
+        
+        elif task_category == 'docstring_generation':
+            if 'docstring' in output_json:
+                response_vars['docstring'] = output_json['docstring']
+        
+        elif task_category == 'code_generation':
+            if 'title' in input_json:
+                prompt_vars['title'] = input_json['title']
+            if 'description' in input_json:
+                prompt_vars['description'] = input_json['description']
+            if 'code' in output_json:
+                response_vars['code'] = output_json['code']
+        
+        elif task_category == 'code_search':
+            if 'query' in input_json:
+                prompt_vars['query'] = input_json['query']
+            if 'code_snippet' in output_json:
+                response_vars['code_snippet'] = output_json['code_snippet']
+        
+        elif task_category == 'code_summarization':
+            if 'summary' in output_json:
+                response_vars['summary'] = output_json['summary']
+        
+        elif task_category == 'code_review':
+            if 'review_comment' in output_json:
+                response_vars['review_comment'] = output_json['review_comment']
+            if 'code_after' in output_json:
+                response_vars['code_after'] = output_json['code_after']
+        
+        elif task_category == 'test_generation':
+            if 'code_to_test' in input_json:
+                prompt_vars['code_to_test'] = input_json['code_to_test']
+            if 'test_cases' in output_json:
+                test_cases = output_json['test_cases']
+                if isinstance(test_cases, list):
+                    response_vars['test_cases'] = '\n\n'.join(test_cases)
+                else:
+                    response_vars['test_cases'] = test_cases
+        
+        elif task_category == 'code_refactoring':
+            if 'code_before' in input_json:
+                prompt_vars['code_before'] = input_json['code_before']
+            elif 'code' in input_json:
+                prompt_vars['code_before'] = input_json['code']
+            if 'code_after' in output_json:
+                response_vars['code_after'] = output_json['code_after']
+            if 'rationale' in output_json:
+                response_vars['rationale'] = output_json['rationale']
+        
+        elif task_category == 'variable_naming':
+            if 'variable_name' in output_json:
+                response_vars['variable_name'] = output_json['variable_name']
+        
+        elif task_category == 'function_naming':
+            if 'function_name' in output_json:
+                response_vars['function_name'] = output_json['function_name']
+        
+        elif task_category == 'api_usage_prediction':
+            if 'next_api_call' in output_json:
+                response_vars['next_api_call'] = output_json['next_api_call']
+        
+        elif task_category == 'bug_detection':
+            if 'buggy_code' in input_json:
+                prompt_vars['buggy_code'] = input_json['buggy_code']
+            elif 'code' in input_json:
+                prompt_vars['buggy_code'] = input_json['code']
+            if 'fixed_code' in output_json:
+                response_vars['fixed_code'] = output_json['fixed_code']
+            if 'bug_description' in output_json:
+                response_vars['bug_description'] = output_json['bug_description']
+        
+        elif task_category == 'code_optimization':
+            if 'code_before' in input_json:
+                prompt_vars['code'] = input_json['code_before']
+            elif 'code' in input_json:
+                prompt_vars['code'] = input_json['code']
+            if 'code_after' in output_json:
+                response_vars['code_after'] = output_json['code_after']
+            if 'rationale' in output_json:
+                response_vars['rationale'] = output_json['rationale']
+        
+        elif task_category == 'code_completion':
+            if 'prefix' in input_json:
+                prompt_vars['prefix'] = input_json['prefix']
+            if 'suffix' in input_json:
+                prompt_vars['suffix'] = input_json['suffix']
+            if 'completion' in output_json:
+                response_vars['completion'] = output_json['completion']
+        
+        # Get paired prompt and response
+        prompt, response = format_prompt_response_pair(task_category, prompt_vars, response_vars)
+        
+        # Add context to prompt if available
+        if context:
+            prompt = add_context_to_prompt(prompt, context)
+        
+        return prompt, response
+        
+    except Exception as e:
+        logger.warning(f"Failed to create paired prompt-response for task {task_category}: {e}")
+        return None, None
 
 
-def _create_code_refactoring_response(output_json: Dict) -> str:
-    """Create response for code refactoring tasks"""
-    if 'code_after' in output_json and 'rationale' in output_json:
-        code_after = output_json['code_after']
-        rationale = output_json['rationale']
-        return f"{rationale}\n\nHere's the improved code:\n\n```rust\n{code_after}\n```"
-    elif 'code_after' in output_json:
-        code_after = output_json['code_after']
-        return f"Here's the refactored code:\n\n```rust\n{code_after}\n```"
-    else:
-        return _create_generic_response(output_json)
 
-
-def _create_variable_naming_response(output_json: Dict) -> str:
-    """Create response for variable naming tasks"""
-    if 'variable_name' in output_json:
-        var_name = output_json['variable_name']
-        return f"A good variable name would be: `{var_name}`"
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_function_naming_response(output_json: Dict) -> str:
-    """Create response for function naming tasks"""
-    if 'function_name' in output_json:
-        func_name = output_json['function_name']
-        return f"A good function name would be: `{func_name}`"
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_api_usage_response(output_json: Dict) -> str:
-    """Create response for API usage prediction tasks"""
-    if 'next_api_call' in output_json:
-        next_api = output_json['next_api_call']
-        return f"Next API call: `{next_api}`"
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_bug_detection_response(output_json: Dict) -> str:
-    """Create response for bug detection tasks"""
-    if 'bug_description' in output_json and 'fixed_code' in output_json:
-        bug_desc = output_json['bug_description']
-        fixed_code = output_json['fixed_code']
-        return f"**Bug Description:**\n{bug_desc}\n\n**Fixed Code:**\n```rust\n{fixed_code}\n```"
-    elif 'fixed_code' in output_json:
-        fixed_code = output_json['fixed_code']
-        return f"Here's the fixed code:\n\n```rust\n{fixed_code}\n```"
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_code_optimization_response(output_json: Dict) -> str:
-    """Create response for code optimization tasks"""
-    if 'code_after' in output_json and 'rationale' in output_json:
-        code_after = output_json['code_after']
-        rationale = output_json['rationale']
-        return f"{rationale}\n\nHere's the optimized code:\n\n```rust\n{code_after}\n```"
-    elif 'code_after' in output_json:
-        code_after = output_json['code_after']
-        return f"Here's the optimized code:\n\n```rust\n{code_after}\n```"
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_code_completion_response(output_json: Dict) -> str:
-    """Create response for code completion tasks"""
-    if 'completion' in output_json:
-        completion = output_json['completion']
-        return completion
-    else:
-        return _create_generic_response(output_json)
-
-
-def _create_generic_response(output_json: Dict) -> str:
-    """Generic response creation for unknown formats"""
-    # Try common output fields in order of preference
-    if 'code' in output_json:
-        return f"```rust\n{output_json['code']}\n```"
-    elif 'code_snippet' in output_json:
-        return f"```rust\n{output_json['code_snippet']}\n```"
-    elif 'code_after' in output_json:
-        return f"```rust\n{output_json['code_after']}\n```"
-    elif 'explanation' in output_json:
-        return output_json['explanation']
-    elif 'docstring' in output_json:
-        return f"```rust\n{output_json['docstring']}\n```"
-    elif 'summary' in output_json:
-        return output_json['summary']
-    else:
-        return "I can help you with that Rust programming task."
 
 
 class DatasetProcessor:

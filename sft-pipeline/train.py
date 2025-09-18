@@ -18,7 +18,7 @@ project_root = Path(__file__).parent
 sys.path.append(str(project_root))
 
 from sft_trainer import SFTTrainerPipeline, load_config
-from data_utils import DatasetProcessor, DatasetValidator, create_sample_dataset
+from data_utils import DatasetProcessor, DatasetValidator, create_sample_dataset, set_data_random_seed
 
 # Set up logging
 logging.basicConfig(
@@ -100,6 +100,10 @@ def main():
         # Load configuration
         logger.info(f"Loading configuration from: {args.config}")
         config = load_config(args.config)
+        
+        # Set random seed for data utilities (uses seed from config or default 42)
+        data_seed = config.get("data_seed", config.get("seed", 42))
+        set_data_random_seed(data_seed)
         
         # Override config with command line arguments
         if args.dataset:
