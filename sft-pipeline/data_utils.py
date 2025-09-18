@@ -39,6 +39,7 @@ def parse_rust_dataset_format(input_data: str, output_data: str, task_category: 
             return None
             
         return [
+            {"role": "system", "content": "You are an expert in Rust programming language."},
             {"role": "user", "content": user_prompt},
             {"role": "assistant", "content": assistant_response}
         ]
