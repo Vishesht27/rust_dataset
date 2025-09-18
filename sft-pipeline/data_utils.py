@@ -60,63 +60,61 @@ def _create_paired_prompt_response(input_json: Dict, output_json: Dict, task_cat
             prompt_vars['code'] = input_json['code']
 
         if 'code_context' in input_json:
-            if task_category == 'test_generation':
-                context = f"{input_json['test_context']}\n{input_json['code_context']}"
-            else:
-                context = input_json['code_context']
+            context = input_json['code_context']
         else:
             context = ''
             
         # Task-specific variable mapping
         if task_category == 'comment_generation':
-            response_vars['commented_code'] = output_json['commented_code']
+            if 'commented_code' in output_json:
+                response_vars['commented_code'] = output_json['commented_code']
         
         elif task_category == 'code_explanation':
-            response_vars['explanation'] = output_json['explanation']
+                response_vars['explanation'] = output_json['explanation']
         
         elif task_category == 'docstring_generation':
-            response_vars['docstring'] = output_json['docstring']
+                response_vars['docstring'] = output_json['docstring']
         
         elif task_category == 'code_generation':
-            prompt_vars['title'] = input_json['title']
-            prompt_vars['description'] = input_json['description']
-            response_vars['code'] = output_json['code']
+                prompt_vars['title'] = input_json['title']
+                prompt_vars['description'] = input_json['description']
+                response_vars['code'] = output_json['code']
         
         elif task_category == 'code_search':
-            prompt_vars['query'] = input_json['query']
-            response_vars['code_snippet'] = output_json['code_snippet']
+                prompt_vars['query'] = input_json['query']
+                response_vars['code_snippet'] = output_json['code_snippet']
         
         elif task_category == 'code_summarization':
-            response_vars['summary'] = output_json['summary']
+                response_vars['summary'] = output_json['summary']
         
         elif task_category == 'code_review':
-            response_vars['review_comment'] = output_json['review_comment']
-            response_vars['code_after'] = output_json['code_after']
+                response_vars['review_comment'] = output_json['review_comment']
+                response_vars['code_after'] = output_json['code_after']
         
         elif task_category == 'test_generation':
-            prompt_vars['code_to_test'] = input_json['code_to_test']
-            test_cases = output_json['test_cases']
-            if isinstance(test_cases, list):
-                response_vars['test_cases'] = '\n\n'.join(test_cases)
-            else:
-                response_vars['test_cases'] = test_cases
+                prompt_vars['code_to_test'] = input_json['code_to_test']
+                test_cases = output_json['test_cases']
+                if isinstance(test_cases, list):
+                    response_vars['test_cases'] = '\n\n'.join(test_cases)
+                else:
+                    response_vars['test_cases'] = test_cases
         
         elif task_category == 'code_refactoring':
             if 'code_before' in input_json:
                 prompt_vars['code_before'] = input_json['code_before']
             elif 'code' in input_json:
                 prompt_vars['code_before'] = input_json['code']
-            response_vars['code_after'] = output_json['code_after']
-            response_vars['rationale'] = output_json['rationale']
+                response_vars['code_after'] = output_json['code_after']
+                response_vars['rationale'] = output_json['rationale']
         
         elif task_category == 'variable_naming':
-            response_vars['variable_name'] = output_json['variable_name']
+                response_vars['variable_name'] = output_json['variable_name']
         
         elif task_category == 'function_naming':
-            response_vars['function_name'] = output_json['function_name']
+                response_vars['function_name'] = output_json['function_name']
         
         elif task_category == 'api_usage_prediction':
-            response_vars['next_api_call'] = output_json['next_api_call']
+                response_vars['next_api_call'] = output_json['next_api_call']
         
         elif task_category == 'bug_detection':
             if 'buggy_code' in input_json:
@@ -124,8 +122,8 @@ def _create_paired_prompt_response(input_json: Dict, output_json: Dict, task_cat
             elif 'code' in input_json:
                 prompt_vars['buggy_code'] = input_json['code']
 
-            response_vars['fixed_code'] = output_json['fixed_code']
-            response_vars['bug_description'] = output_json['bug_description']
+                response_vars['fixed_code'] = output_json['fixed_code']
+                response_vars['bug_description'] = output_json['bug_description']
         
         elif task_category == 'code_optimization':
             if 'code_before' in input_json:
@@ -133,13 +131,13 @@ def _create_paired_prompt_response(input_json: Dict, output_json: Dict, task_cat
             elif 'code' in input_json:
                 prompt_vars['code'] = input_json['code']
 
-            response_vars['code_after'] = output_json['code_after']
-            response_vars['rationale'] = output_json['rationale']
+                response_vars['code_after'] = output_json['code_after']
+                response_vars['rationale'] = output_json['rationale']
         
         elif task_category == 'code_completion':
-            prompt_vars['prefix'] = input_json['prefix']
-            prompt_vars['suffix'] = input_json['suffix']
-            response_vars['completion'] = output_json['completion']
+                prompt_vars['prefix'] = input_json['prefix']
+                prompt_vars['suffix'] = input_json['suffix']
+                response_vars['completion'] = output_json['completion']
         
         # Get paired prompt and response
         prompt, response = format_prompt_response_pair(task_category, prompt_vars, response_vars)
@@ -298,10 +296,12 @@ class DatasetValidator:
     @staticmethod
     def validate_conversation_format(example: Dict[str, Any]) -> bool:
         """Validate that example has proper conversation format"""
-        if "messages" not in example:
+        # First, try to get messages from the example
+        messages = DatasetValidator._extract_messages(example)
+        
+        if not messages:
             return False
             
-        messages = example["messages"]
         if not isinstance(messages, list):
             return False
             
@@ -314,6 +314,46 @@ class DatasetValidator:
                 return False
                 
         return True
+    
+    @staticmethod
+    def _extract_messages(example: Dict[str, Any]) -> Optional[List[Dict[str, str]]]:
+        """Extract messages from various data formats"""
+        # Format 1: Already has messages field
+        if "messages" in example:
+            return example["messages"]
+        
+        # Format 2: Standard instruction-response format
+        elif "instruction" in example and "response" in example:
+            return [
+                {"role": "user", "content": example["instruction"]},
+                {"role": "assistant", "content": example["response"]}
+            ]
+        
+        # Format 3: Prompt-completion format
+        elif "prompt" in example and "completion" in example:
+            return [
+                {"role": "user", "content": example["prompt"]},
+                {"role": "assistant", "content": example["completion"]}
+            ]
+        
+        # Format 4: Rust dataset format (input_data, output_data, task_category)
+        elif "input_data" in example and "output_data" in example:
+            try:
+                return parse_rust_dataset_format(
+                    example["input_data"],
+                    example["output_data"], 
+                    example.get("task_category", "unknown")
+                )
+            except Exception as e:
+                logger.warning(f"Failed to parse Rust dataset format: {e}")
+                return None
+        
+        # Format 5: Conversation field
+        elif "conversation" in example:
+            return example["conversation"]
+        
+        else:
+            return None
         
     @staticmethod
     def validate_dataset(dataset: Dataset) -> Dict[str, Any]:
@@ -325,22 +365,39 @@ class DatasetValidator:
             "role_distribution": {"system": 0, "user": 0, "assistant": 0},
             "avg_conversation_length": 0,
             "max_conversation_length": 0,
-            "min_conversation_length": float('inf')
+            "min_conversation_length": float('inf'),
+            "format_distribution": {
+                "messages": 0,
+                "instruction_response": 0, 
+                "prompt_completion": 0,
+                "rust_dataset": 0,
+                "conversation": 0,
+                "unknown": 0
+            }
         }
         
         total_length = 0
         
         for example in dataset:
-            if DatasetValidator.validate_conversation_format(example):
+            # Extract messages using our flexible parser
+            messages = DatasetValidator._extract_messages(example)
+            
+            # Track format types
+            format_type = DatasetValidator._detect_format_type(example)
+            if format_type in stats["format_distribution"]:
+                stats["format_distribution"][format_type] += 1
+            else:
+                stats["format_distribution"]["unknown"] += 1
+            
+            if messages and DatasetValidator._validate_messages_structure(messages):
                 stats["valid_examples"] += 1
                 
-                messages = example["messages"]
                 stats["max_conversation_length"] = max(stats["max_conversation_length"], len(messages))
                 stats["min_conversation_length"] = min(stats["min_conversation_length"], len(messages))
                 total_length += len(messages)
                 
                 for message in messages:
-                    role = message["role"]
+                    role = message.get("role", "unknown")
                     if role in stats["role_distribution"]:
                         stats["role_distribution"][role] += 1
             else:
@@ -353,6 +410,38 @@ class DatasetValidator:
             stats["min_conversation_length"] = 0
             
         return stats
+    
+    @staticmethod
+    def _detect_format_type(example: Dict[str, Any]) -> str:
+        """Detect the format type of an example"""
+        if "messages" in example:
+            return "messages"
+        elif "instruction" in example and "response" in example:
+            return "instruction_response"
+        elif "prompt" in example and "completion" in example:
+            return "prompt_completion"
+        elif "input_data" in example and "output_data" in example:
+            return "rust_dataset"
+        elif "conversation" in example:
+            return "conversation"
+        else:
+            return "unknown"
+    
+    @staticmethod
+    def _validate_messages_structure(messages: List[Dict[str, str]]) -> bool:
+        """Validate the structure of extracted messages"""
+        if not isinstance(messages, list):
+            return False
+            
+        for message in messages:
+            if not isinstance(message, dict):
+                return False
+            if "role" not in message or "content" not in message:
+                return False
+            if message["role"] not in ["system", "user", "assistant"]:
+                return False
+                
+        return True
 
 
 def create_sample_dataset(output_path: str, num_examples: int = 100):
