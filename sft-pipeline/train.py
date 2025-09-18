@@ -10,6 +10,7 @@ import argparse
 import json
 import logging
 import os
+import random
 import sys
 from pathlib import Path
 
@@ -104,6 +105,10 @@ def main():
         
         # Set random seed for prompt generation (uses seed from config or default 42)
         data_seed = config.get("data_seed", config.get("seed", 42))
+        logger.info(f"Setting random seed to: {data_seed}")
+        
+        # Set random seed directly to ensure all random operations are seeded
+        random.seed(data_seed)
         set_random_seed(data_seed)
         
         # Override config with command line arguments
@@ -142,6 +147,32 @@ def main():
             processor = DatasetProcessor(tokenizer)
             dataset = processor.load_dataset_from_file(config["dataset_path"], config.get("dataset_format", "csv"))
             
+            # Print first 5 samples to check random seed consistency
+            logger.info("=== First 5 samples from dataset (checking random seed consistency) ===")
+            for i in range(min(5, len(dataset))):
+                logger.info(f"Sample {i+1}:")
+                sample = dataset[i]
+                if "input_data" in sample and "output_data" in sample:
+                    # For Rust dataset format, show the parsed conversation
+                    from data_utils import parse_rust_dataset_format
+                    messages = parse_rust_dataset_format(
+                        sample["input_data"],
+                        sample["output_data"], 
+                        sample.get("task_category", "unknown")
+                    )
+                    if messages:
+                        logger.info(f"  Task: {sample.get('task_category', 'unknown')}")
+                        logger.info(f"  Parsed conversation: {messages}")
+                    else:
+                        logger.info(f"  Raw input_data: {sample['input_data'][:200]}...")
+                        logger.info(f"  Raw output_data: {sample['output_data'][:200]}...")
+                else:
+                    # For other formats, show raw data
+                    sample_str = str(sample)[:300] + "..." if len(str(sample)) > 300 else str(sample)
+                    logger.info(f"  {sample_str}")
+                logger.info("")
+            logger.info("=== End of sample display ===")
+            
             validator = DatasetValidator()
             stats = validator.validate_dataset(dataset)
             
@@ -159,6 +190,38 @@ def main():
             
         # Create and run training pipeline
         logger.info("Starting SFT training pipeline...")
+        
+        # First, let's load and display the first 5 samples to check random seed consistency
+        logger.info("=== First 5 samples from dataset (checking random seed consistency) ===")
+        from transformers import AutoTokenizer
+        tokenizer = AutoTokenizer.from_pretrained(config["model_name"], trust_remote_code=True)
+        processor = DatasetProcessor(tokenizer)
+        dataset = processor.load_dataset_from_file(config["dataset_path"], config.get("dataset_format", "csv"))
+        
+        for i in range(min(5, len(dataset))):
+            logger.info(f"Sample {i+1}:")
+            sample = dataset[i]
+            if "input_data" in sample and "output_data" in sample:
+                # For Rust dataset format, show the parsed conversation
+                from data_utils import parse_rust_dataset_format
+                messages = parse_rust_dataset_format(
+                    sample["input_data"],
+                    sample["output_data"], 
+                    sample.get("task_category", "unknown")
+                )
+                if messages:
+                    logger.info(f"  Task: {sample.get('task_category', 'unknown')}")
+                    logger.info(f"  Parsed conversation: {messages}")
+                else:
+                    logger.info(f"  Raw input_data: {sample['input_data'][:200]}...")
+                    logger.info(f"  Raw output_data: {sample['output_data'][:200]}...")
+            else:
+                # For other formats, show raw data
+                sample_str = str(sample)[:300] + "..." if len(str(sample)) > 300 else str(sample)
+                logger.info(f"  {sample_str}")
+            logger.info("")
+        logger.info("=== End of sample display ===")
+        
         pipeline = SFTTrainerPipeline(config)
         pipeline.train()
         
