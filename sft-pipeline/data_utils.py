@@ -6,8 +6,7 @@ Handles dataset loading, preprocessing, and formatting
 
 import json
 import logging
-import random
-from typing import Dict, List, Optional, Union, Any
+from typing import Dict, List, Optional, Any
 from pathlib import Path
 import pandas as pd
 from datasets import Dataset, load_dataset
@@ -59,107 +58,88 @@ def _create_paired_prompt_response(input_json: Dict, output_json: Dict, task_cat
         # Common input variables
         if 'code' in input_json:
             prompt_vars['code'] = input_json['code']
+
         if 'code_context' in input_json:
-            context = input_json['code_context']
+            if task_category == 'test_generation':
+                context = f"{input_json['test_context']}\n{input_json['code_context']}"
+            else:
+                context = input_json['code_context']
         else:
             context = ''
             
         # Task-specific variable mapping
         if task_category == 'comment_generation':
-            if 'commented_code' in output_json:
-                response_vars['commented_code'] = output_json['commented_code']
+            response_vars['commented_code'] = output_json['commented_code']
         
         elif task_category == 'code_explanation':
-            if 'explanation' in output_json:
-                response_vars['explanation'] = output_json['explanation']
+            response_vars['explanation'] = output_json['explanation']
         
         elif task_category == 'docstring_generation':
-            if 'docstring' in output_json:
-                response_vars['docstring'] = output_json['docstring']
+            response_vars['docstring'] = output_json['docstring']
         
         elif task_category == 'code_generation':
-            if 'title' in input_json:
-                prompt_vars['title'] = input_json['title']
-            if 'description' in input_json:
-                prompt_vars['description'] = input_json['description']
-            if 'code' in output_json:
-                response_vars['code'] = output_json['code']
+            prompt_vars['title'] = input_json['title']
+            prompt_vars['description'] = input_json['description']
+            response_vars['code'] = output_json['code']
         
         elif task_category == 'code_search':
-            if 'query' in input_json:
-                prompt_vars['query'] = input_json['query']
-            if 'code_snippet' in output_json:
-                response_vars['code_snippet'] = output_json['code_snippet']
+            prompt_vars['query'] = input_json['query']
+            response_vars['code_snippet'] = output_json['code_snippet']
         
         elif task_category == 'code_summarization':
-            if 'summary' in output_json:
-                response_vars['summary'] = output_json['summary']
+            response_vars['summary'] = output_json['summary']
         
         elif task_category == 'code_review':
-            if 'review_comment' in output_json:
-                response_vars['review_comment'] = output_json['review_comment']
-            if 'code_after' in output_json:
-                response_vars['code_after'] = output_json['code_after']
+            response_vars['review_comment'] = output_json['review_comment']
+            response_vars['code_after'] = output_json['code_after']
         
         elif task_category == 'test_generation':
-            if 'code_to_test' in input_json:
-                prompt_vars['code_to_test'] = input_json['code_to_test']
-            if 'test_cases' in output_json:
-                test_cases = output_json['test_cases']
-                if isinstance(test_cases, list):
-                    response_vars['test_cases'] = '\n\n'.join(test_cases)
-                else:
-                    response_vars['test_cases'] = test_cases
+            prompt_vars['code_to_test'] = input_json['code_to_test']
+            test_cases = output_json['test_cases']
+            if isinstance(test_cases, list):
+                response_vars['test_cases'] = '\n\n'.join(test_cases)
+            else:
+                response_vars['test_cases'] = test_cases
         
         elif task_category == 'code_refactoring':
             if 'code_before' in input_json:
                 prompt_vars['code_before'] = input_json['code_before']
             elif 'code' in input_json:
                 prompt_vars['code_before'] = input_json['code']
-            if 'code_after' in output_json:
-                response_vars['code_after'] = output_json['code_after']
-            if 'rationale' in output_json:
-                response_vars['rationale'] = output_json['rationale']
+            response_vars['code_after'] = output_json['code_after']
+            response_vars['rationale'] = output_json['rationale']
         
         elif task_category == 'variable_naming':
-            if 'variable_name' in output_json:
-                response_vars['variable_name'] = output_json['variable_name']
+            response_vars['variable_name'] = output_json['variable_name']
         
         elif task_category == 'function_naming':
-            if 'function_name' in output_json:
-                response_vars['function_name'] = output_json['function_name']
+            response_vars['function_name'] = output_json['function_name']
         
         elif task_category == 'api_usage_prediction':
-            if 'next_api_call' in output_json:
-                response_vars['next_api_call'] = output_json['next_api_call']
+            response_vars['next_api_call'] = output_json['next_api_call']
         
         elif task_category == 'bug_detection':
             if 'buggy_code' in input_json:
                 prompt_vars['buggy_code'] = input_json['buggy_code']
             elif 'code' in input_json:
                 prompt_vars['buggy_code'] = input_json['code']
-            if 'fixed_code' in output_json:
-                response_vars['fixed_code'] = output_json['fixed_code']
-            if 'bug_description' in output_json:
-                response_vars['bug_description'] = output_json['bug_description']
+
+            response_vars['fixed_code'] = output_json['fixed_code']
+            response_vars['bug_description'] = output_json['bug_description']
         
         elif task_category == 'code_optimization':
             if 'code_before' in input_json:
                 prompt_vars['code'] = input_json['code_before']
             elif 'code' in input_json:
                 prompt_vars['code'] = input_json['code']
-            if 'code_after' in output_json:
-                response_vars['code_after'] = output_json['code_after']
-            if 'rationale' in output_json:
-                response_vars['rationale'] = output_json['rationale']
+
+            response_vars['code_after'] = output_json['code_after']
+            response_vars['rationale'] = output_json['rationale']
         
         elif task_category == 'code_completion':
-            if 'prefix' in input_json:
-                prompt_vars['prefix'] = input_json['prefix']
-            if 'suffix' in input_json:
-                prompt_vars['suffix'] = input_json['suffix']
-            if 'completion' in output_json:
-                response_vars['completion'] = output_json['completion']
+            prompt_vars['prefix'] = input_json['prefix']
+            prompt_vars['suffix'] = input_json['suffix']
+            response_vars['completion'] = output_json['completion']
         
         # Get paired prompt and response
         prompt, response = format_prompt_response_pair(task_category, prompt_vars, response_vars)
@@ -217,7 +197,16 @@ class DatasetProcessor:
             
             if not messages:
                 # Handle different data formats
-                if "conversation" in example:
+                if "input_data" in example and "output_data" in example:
+                    # Handle Rust dataset format with comprehensive parser
+                    messages = parse_rust_dataset_format(
+                        example["input_data"], 
+                        example["output_data"], 
+                        example.get("task_category", "unknown")
+                    )
+                    if not messages:
+                        return {"text": ""}
+                elif "conversation" in example:
                     messages = example["conversation"]
                 elif "instruction" in example and "response" in example:
                     messages = [
@@ -229,15 +218,6 @@ class DatasetProcessor:
                         {"role": "user", "content": example["prompt"]},
                         {"role": "assistant", "content": example["completion"]}
                     ]
-                elif "input_data" in example and "output_data" in example:
-                    # Handle Rust dataset format with comprehensive parser
-                    messages = parse_rust_dataset_format(
-                        example["input_data"], 
-                        example["output_data"], 
-                        example.get("task_category", "unknown")
-                    )
-                    if not messages:
-                        return {"text": ""}
                 else:
                     logger.warning(f"Unknown data format in example: {example.keys()}")
                     return {"text": ""}

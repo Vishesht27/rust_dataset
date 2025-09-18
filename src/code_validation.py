@@ -305,10 +305,7 @@ def main(csv_file, input_column, output_column, task_column, output_file="result
             task = df.loc[idx, task_column]
             crate_name = df.loc[idx, "crate_name"]
 
-            if task != TaskCategory.TEST_GENERATION:
-                code_context = parse_object(input_data).get("code_context", "")
-            else:
-                code_context = parse_object(input_data).get("test_context", "")
+            code_context = parse_object(input_data).get("code_context", "")
             output = df.loc[idx, output_column]
 
             # Remove ```json in output
@@ -342,8 +339,9 @@ def main(csv_file, input_column, output_column, task_column, output_file="result
                 suffix = parse_object(input_data).get("suffix", "")
                 code = build_rust_main(f"{prefix}{output_code}{suffix}",None)
             elif task == TaskCategory.TEST_GENERATION:
+                test_context = parse_object(input_data).get("test_context", "")
                 code_to_test = parse_object(input_data).get("code_to_test", "")
-                code = build_rust_main(output_code,f"{code_context}\n{code_to_test}")
+                code = build_rust_main(output_code,f"{test_context}\n{code_context}\n{code_to_test}")
             elif task == TaskCategory.API_USAGE_PREDICTION:
                 current_code = parse_object(input_data).get("code", "")
                 code = build_rust_main(f"{current_code}\n{output_code}",f"{code_context}")
