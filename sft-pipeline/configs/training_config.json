@@ -50,7 +50,7 @@
     "fsdp_offload_params": false,
     "fsdp_sharding_strategy": "FULL_SHARD",
     "fsdp_sync_module_states": true,
-    "fsdp_use_orig_params": false
+    "fsdp_use_orig_params": true
   },
   "ddp_find_unused_parameters": false,
   "ddp_backend": "nccl",

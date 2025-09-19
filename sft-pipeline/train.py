@@ -3,7 +3,12 @@
 Main training script for SFT pipeline with multi-GPU support
 Usage: 
   Single GPU: python train.py --config configs/training_config.json
-  Multi-GPU:  accelerate launch --multi_gpu train.py --config configs/training_config.json
+  Multi-GPU:  accelerate launch --multi_gpu --num_processes 2 train.py --config configs/training_config.json
+  
+  Note: For multi-GPU training, make sure to:
+  1. Set "use_multi_gpu": true in your config
+  2. Use 'accelerate launch' command instead of 'python'
+  3. Specify --num_processes equal to the number of GPUs you want to use
 """
 
 import argparse

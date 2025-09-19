@@ -25,8 +25,6 @@ from transformers import (
 from trl import SFTTrainer, SFTConfig
 from peft import LoraConfig, get_peft_model, TaskType
 import wandb
-from accelerate import Accelerator
-from accelerate.utils import set_seed as accelerate_set_seed
 from data_utils import parse_rust_dataset_format
 
 # Set up logging
@@ -41,18 +39,22 @@ class SFTTrainerPipeline:
         self.model = None
         self.tokenizer = None
         self.trainer = None
-        self.accelerator = None
-        
-        # Initialize accelerator for multi-GPU support
-        self.accelerator = Accelerator()
         
         # Set seeds
         seed = self.config.get("seed", 42)
         set_seed(seed)
-        accelerate_set_seed(seed)
         
-        logger.info(f"Initialized with {self.accelerator.num_processes} processes")
-        logger.info(f"Using device: {self.accelerator.device}")
+        logger.info("SFT Trainer Pipeline initialized")
+        
+        # Check for multi-GPU setup
+        import torch
+        if torch.cuda.is_available():
+            gpu_count = torch.cuda.device_count()
+            logger.info(f"Available GPUs: {gpu_count}")
+            for i in range(gpu_count):
+                logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
+        else:
+            logger.info("CUDA not available")
         
     def load_model_and_tokenizer(self):
         model_name = self.config.get("model_name", "Qwen/Qwen2.5-32B-Instruct")
@@ -62,7 +64,7 @@ class SFTTrainerPipeline:
         # Load model with full precision (no quantization for better performance)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.bfloat16,  # Use bfloat16 for better numerical stability
+            dtype=torch.bfloat16,  # Use bfloat16 for better numerical stability
             trust_remote_code=True,
             device_map=None,  # Let accelerator handle device placement
         )
@@ -205,20 +207,29 @@ class SFTTrainerPipeline:
         
     def create_training_args(self) -> SFTConfig:
         """Create training arguments with multi-GPU support"""
+        import torch
+        
         # Calculate effective batch size
         per_device_batch_size = self.config.get("per_device_train_batch_size", 2)
         gradient_accumulation_steps = self.config.get("gradient_accumulation_steps", 4)
-        num_processes = self.accelerator.num_processes
         
-        effective_batch_size = per_device_batch_size * gradient_accumulation_steps * num_processes
+        # For multi-GPU, we need to check if we're in a distributed environment
+        world_size = 1
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            world_size = torch.distributed.get_world_size()
+        elif torch.cuda.is_available():
+            # If not in distributed mode but multi-GPU is requested, use device count
+            world_size = torch.cuda.device_count() if self.config.get("use_multi_gpu", False) else 1
+            
+        effective_batch_size = per_device_batch_size * gradient_accumulation_steps * world_size
         
         logger.info(f"Effective batch size: {effective_batch_size} "
                    f"(per_device: {per_device_batch_size}, "
                    f"grad_accum: {gradient_accumulation_steps}, "
-                   f"processes: {num_processes})")
+                   f"world_size: {world_size})")
         
         # Check if multi-GPU training is enabled
-        use_multi_gpu = self.config.get("use_multi_gpu", False) and num_processes > 1
+        use_multi_gpu = self.config.get("use_multi_gpu", False) and world_size > 1
         logger.info(f"Multi-GPU training: {'enabled' if use_multi_gpu else 'disabled'}")
         
         return SFTConfig(
@@ -313,7 +324,14 @@ class SFTTrainerPipeline:
         
     def train(self):
         """Main training function with multi-GPU support"""
-        if self.accelerator.is_main_process:
+        import torch
+        
+        # Check if we're in the main process (for distributed training)
+        is_main_process = True
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            is_main_process = torch.distributed.get_rank() == 0
+            
+        if is_main_process:
             logger.info("Starting SFT training pipeline")
             
             # Initialize wandb if enabled
@@ -335,24 +353,17 @@ class SFTTrainerPipeline:
             dataset = self.load_dataset()
             formatted_dataset = self.format_dataset(dataset)
             
-            # Create trainer
+            # Create trainer - SFTTrainer handles multi-GPU internally via TrainingArguments
             self.trainer = self.create_trainer(formatted_dataset)
             
-            # Prepare for multi-GPU training if enabled
-            use_multi_gpu = self.config.get("use_multi_gpu", False) and self.accelerator.num_processes > 1
-            if use_multi_gpu:
-                self.trainer.model, self.trainer.optimizer, self.trainer.lr_scheduler = self.accelerator.prepare(
-                    self.trainer.model, self.trainer.optimizer, self.trainer.lr_scheduler
-                )
-            
             # Start training
-            if self.accelerator.is_main_process:
+            if is_main_process:
                 logger.info("Starting training...")
             
             self.trainer.train()
             
             # Save model
-            if self.accelerator.is_main_process:
+            if is_main_process:
                 logger.info("Saving model...")
                 self.trainer.save_model()
                 self.tokenizer.save_pretrained(self.config.get("output_dir", "./qwen2.5-32b-sft"))
@@ -362,7 +373,7 @@ class SFTTrainerPipeline:
             logger.error(f"Training failed: {str(e)}")
             raise
         finally:
-            if self.accelerator.is_main_process and self.config.get("use_wandb", False):
+            if is_main_process and self.config.get("use_wandb", False):
                 wandb.finish()
 
 
