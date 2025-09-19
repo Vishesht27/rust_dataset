@@ -64,9 +64,10 @@ class SFTTrainerPipeline:
         # Load model with full precision (no quantization for better performance)
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            dtype=torch.bfloat16,  # Use bfloat16 for better numerical stability
+            torch_dtype=torch.bfloat16,  # Use bfloat16 for better numerical stability
             trust_remote_code=True,
             device_map=None,  # Let accelerator handle device placement
+            attn_implementation="flash_attention_2",  # Use Flash Attention for packing
         )
         
         # Load tokenizer
@@ -104,7 +105,13 @@ class SFTTrainerPipeline:
         
         self.model = get_peft_model(self.model, lora_config)
         
-        if self.accelerator.is_main_process:
+        # Check if we're in the main process (for distributed training)
+        import torch
+        is_main_process = True
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            is_main_process = torch.distributed.get_rank() == 0
+            
+        if is_main_process:
             self.model.print_trainable_parameters()
         
     def load_dataset(self) -> Dataset:

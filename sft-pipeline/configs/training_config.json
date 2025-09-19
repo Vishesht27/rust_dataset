@@ -1,18 +1,18 @@
 {
-  "model_name": "Qwen/Qwen2.5-3B",
+  "model_name": "Qwen/Qwen2.5-32B-Instruct",
   "dataset_path": "./data/rust_dataset_100k.csv",
   "dataset_format": "csv",
   "output_dir": "./outputs/qwen-sft",
   
-  "per_device_train_batch_size": 1,
-  "per_device_eval_batch_size": 1,
-  "gradient_accumulation_steps": 2,
+  "per_device_train_batch_size": 2,
+  "per_device_eval_batch_size": 2,
+  "gradient_accumulation_steps": 4,
   "learning_rate": 2e-5,
   "num_train_epochs": 2,
   "max_steps": 20,
   "warmup_steps": 2,
   "max_seq_length": 2048,
-  "packing": true,
+  "packing": false,
   
   "logging_steps": 2,
   "save_steps": 10,
