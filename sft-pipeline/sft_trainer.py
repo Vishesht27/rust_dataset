@@ -2,6 +2,7 @@
 """
 Fixed SFT Trainer with proper distributed training setup
 Addresses NCCL and process group initialization issues
+Includes smart DDP/FSDP detection based on configuration
 """
 
 import os
@@ -210,50 +211,75 @@ class SFTTrainerPipeline:
         return "\n\n".join(formatted_parts) + "\n"
         
     def create_training_args(self):
-        """Create training arguments with fixed distributed setup"""
+        """Create training arguments with smart DDP/FSDP detection"""
         per_device_batch_size = self.config.get("per_device_train_batch_size", 2)
         gradient_accumulation_steps = self.config.get("gradient_accumulation_steps", 4)
         
         effective_batch_size = per_device_batch_size * gradient_accumulation_steps * self.world_size
         
+        # Auto-detect: if FSDP is configured, use FSDP; otherwise use DDP
+        fsdp_setting = self.config.get("fsdp", "")
+        use_fsdp = bool(fsdp_setting.strip())  # Check if FSDP is actually configured
+        
         if self.rank == 0:
             logger.info(f"Effective batch size: {effective_batch_size}")
             logger.info(f"Multi-GPU training: {'enabled' if self.is_distributed else 'disabled'}")
+            logger.info(f"Using {'FSDP' if use_fsdp else 'DDP'} for distributed training")
         
-        return SFTConfig(
-            output_dir=self.config.get("output_dir", "./qwen2.5-7b-sft"),
-            per_device_train_batch_size=per_device_batch_size,
-            gradient_accumulation_steps=gradient_accumulation_steps,
-            learning_rate=self.config.get("learning_rate", 2e-5),
-            num_train_epochs=self.config.get("num_train_epochs", 3),
-            max_steps=self.config.get("max_steps", -1),
-            warmup_steps=self.config.get("warmup_steps", 100),
-            logging_steps=self.config.get("logging_steps", 10),
-            save_steps=self.config.get("save_steps", 500),
-            save_strategy=self.config.get("save_strategy", "steps"),
-            bf16=True,
-            dataloader_pin_memory=True,
-            remove_unused_columns=False,
-            report_to=self.config.get("report_to", "wandb" if self.config.get("use_wandb", False) else "none"),
-            run_name=self.config.get("run_name", "qwen2.5-7b-sft"),
-            seed=self.config.get("seed", 42),
-            data_seed=self.config.get("data_seed", 42),
-            # Fixed distributed settings
-            local_rank=self.local_rank if self.is_distributed else -1,
-            ddp_backend="nccl" if self.is_distributed else None,
-            ddp_find_unused_parameters=False,
-            ddp_timeout=1800,
+        # Base configuration common to both DDP and FSDP
+        base_config = {
+            "output_dir": self.config.get("output_dir", "./qwen2.5-7b-sft"),
+            "per_device_train_batch_size": per_device_batch_size,
+            "gradient_accumulation_steps": gradient_accumulation_steps,
+            "learning_rate": self.config.get("learning_rate", 2e-5),
+            "num_train_epochs": self.config.get("num_train_epochs", 3),
+            "max_steps": self.config.get("max_steps", -1),
+            "warmup_steps": self.config.get("warmup_steps", 100),
+            "logging_steps": self.config.get("logging_steps", 10),
+            "save_steps": self.config.get("save_steps", 500),
+            "save_strategy": self.config.get("save_strategy", "steps"),
+            "bf16": self.config.get("bf16", True),
+            "dataloader_pin_memory": self.config.get("dataloader_pin_memory", True),
+            "remove_unused_columns": False,
+            "report_to": self.config.get("report_to", "wandb" if self.config.get("use_wandb", False) else "none"),
+            "run_name": self.config.get("run_name", "qwen2.5-7b-sft"),
+            "seed": self.config.get("seed", 42),
+            "data_seed": self.config.get("data_seed", 42),
             # Optimizer settings
-            optim=self.config.get("optim", "adamw_torch_fused"),
-            weight_decay=self.config.get("weight_decay", 0.01),
-            max_grad_norm=self.config.get("max_grad_norm", 1.0),
-            lr_scheduler_type=self.config.get("lr_scheduler_type", "cosine"),
-            warmup_ratio=self.config.get("warmup_ratio", 0.1),
-            # SFT-specific parameters (correct API)
-            max_length=self.config.get("max_seq_length", 2048),
-            dataset_text_field="text",
-            packing=self.config.get("packing", False),
-        )
+            "optim": self.config.get("optim", "adamw_torch_fused"),
+            "weight_decay": self.config.get("weight_decay", 0.01),
+            "max_grad_norm": self.config.get("max_grad_norm", 1.0),
+            "lr_scheduler_type": self.config.get("lr_scheduler_type", "cosine"),
+            "warmup_ratio": self.config.get("warmup_ratio", 0.1),
+            # SFT-specific parameters
+            "max_seq_length": self.config.get("max_seq_length", 2048),
+            "dataset_text_field": "text",
+            "packing": self.config.get("packing", False),
+        }
+        
+        if use_fsdp:
+            # FSDP configuration
+            fsdp_config = self.config.get("fsdp_config", {})
+            return SFTConfig(
+                **base_config,
+                # FSDP settings
+                fsdp=fsdp_setting,
+                fsdp_config=fsdp_config,
+                # Additional FSDP-specific settings
+                gradient_checkpointing=self.config.get("gradient_checkpointing", True),  # Recommended for FSDP
+                local_rank=self.local_rank if self.is_distributed else -1,
+            )
+        else:
+            # DDP configuration
+            return SFTConfig(
+                **base_config,
+                # DDP settings
+                local_rank=self.local_rank if self.is_distributed else -1,
+                ddp_backend="nccl" if self.is_distributed else None,
+                ddp_find_unused_parameters=self.config.get("ddp_find_unused_parameters", False),
+                ddp_timeout=self.config.get("ddp_timeout", 1800),
+                gradient_checkpointing=self.config.get("gradient_checkpointing", False),  # Optional for DDP
+            )
         
     def train(self):
         """Main training function with fixed distributed setup"""
@@ -329,7 +355,7 @@ def main():
     args = parser.parse_args()
     
     config = load_config(args.config)
-    pipeline = FixedSFTTrainerPipeline(config)
+    pipeline = SFTTrainerPipeline(config)
     pipeline.train()
 
 
