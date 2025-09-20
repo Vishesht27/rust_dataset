@@ -67,7 +67,6 @@ class SFTTrainerPipeline:
             torch_dtype=torch.bfloat16,  # Use bfloat16 for better numerical stability
             trust_remote_code=True,
             device_map=None,  # Let accelerator handle device placement
-            attn_implementation="flash_attention_2",  # Use Flash Attention for packing
         )
         
         # Load tokenizer
@@ -266,24 +265,14 @@ class SFTTrainerPipeline:
             run_name=self.config.get("run_name", "qwen2.5-32b-sft"),
             seed=self.config.get("seed", 42),
             data_seed=self.config.get("data_seed", 42),
-            # Multi-GPU specific settings
+            # Multi-GPU specific settings (simplified to avoid hanging)
             **({} if not use_multi_gpu else {
-                "ddp_find_unused_parameters": False,
-                "ddp_backend": "nccl",
-                "fsdp": self.config.get("fsdp", "full_shard auto_wrap"),
-                "fsdp_config": self.config.get("fsdp_config", {
-                    "fsdp_auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
-                    "fsdp_backward_prefetch": "BACKWARD_PRE",
-                    "fsdp_cpu_ram_efficient_loading": True,
-                    "fsdp_forward_prefetch": True,
-                    "fsdp_offload_params": False,
-                    "fsdp_sharding_strategy": "FULL_SHARD",
-                    "fsdp_sync_module_states": True,
-                    "fsdp_use_orig_params": False,
-                }),
+                "ddp_find_unused_parameters": self.config.get("ddp_find_unused_parameters", False),
+                "ddp_backend": self.config.get("ddp_backend", "nccl"),
+                "ddp_timeout": self.config.get("ddp_timeout", 1800),
             }),
             # Gradient checkpointing for memory efficiency
-            gradient_checkpointing=True,
+            gradient_checkpointing=self.config.get("gradient_checkpointing", False),
             # Optimizer settings
             optim=self.config.get("optim", "adamw_torch_fused"),
             adam_beta1=self.config.get("adam_beta1",0.9),

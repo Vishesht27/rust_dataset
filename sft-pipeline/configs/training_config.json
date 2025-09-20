@@ -1,5 +1,5 @@
 {
-  "model_name": "Qwen/Qwen2.5-32B-Instruct",
+  "model_name": "Qwen/Qwen2.5-7B-Instruct",
   "dataset_path": "./data/rust_dataset_100k.csv",
   "dataset_format": "csv",
   "output_dir": "./outputs/qwen-sft",
@@ -41,19 +41,11 @@
   "lr_scheduler_type": "cosine",
   "warmup_ratio": 0.1,
   
-  "fsdp": "full_shard auto_wrap",
-  "fsdp_config": {
-    "fsdp_auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
-    "fsdp_backward_prefetch": "BACKWARD_PRE",
-    "fsdp_cpu_ram_efficient_loading": true,
-    "fsdp_forward_prefetch": true,
-    "fsdp_offload_params": false,
-    "fsdp_sharding_strategy": "FULL_SHARD",
-    "fsdp_sync_module_states": true,
-    "fsdp_use_orig_params": true
-  },
+  "fsdp": "",
+  "fsdp_config": {},
   "ddp_find_unused_parameters": false,
   "ddp_backend": "nccl",
+  "ddp_timeout": 1800,
   
   "use_multi_gpu": true,
   "use_wandb": true,
@@ -67,6 +59,6 @@
   "seed": 42,
   "data_seed": 42,
   "report_to": "wandb",
-  "gradient_checkpointing": true,
+  "gradient_checkpointing": false,
   "dataloader_pin_memory": true
 }
