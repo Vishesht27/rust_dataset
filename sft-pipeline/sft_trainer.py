@@ -1,17 +1,12 @@
 #!/usr/bin/env python3
 """
-SFT (Supervised Fine-Tuning) Pipeline for Qwen2.5 32B Model
-Based on foundation-model-stack/fms-hf-tuning implementation
-Supports multi-GPU training with FSDP and no GPU memory constraints
+Fixed SFT Trainer with proper distributed training setup
+Addresses NCCL and process group initialization issues
 """
 
 import os
 import json
 import logging
-import argparse
-from typing import Dict, List, Optional, Union
-from pathlib import Path
-
 import torch
 import torch.distributed as dist
 from datasets import Dataset, load_dataset
@@ -19,7 +14,6 @@ from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
     TrainingArguments,
-    DataCollatorForLanguageModeling,
     set_seed,
 )
 from trl import SFTTrainer, SFTConfig
@@ -27,47 +21,75 @@ from peft import LoraConfig, get_peft_model, TaskType
 import wandb
 from data_utils import parse_rust_dataset_format
 
-# Set up logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 
+def setup_distributed():
+    """Properly setup distributed training with NCCL"""
+    if 'RANK' in os.environ and 'WORLD_SIZE' in os.environ:
+        rank = int(os.environ['RANK'])
+        world_size = int(os.environ['WORLD_SIZE'])
+        local_rank = int(os.environ.get('LOCAL_RANK', 0))
+        
+        # Set the device before initializing process group
+        torch.cuda.set_device(local_rank)
+        
+        # Initialize process group with explicit device_id
+        if not dist.is_initialized():
+            dist.init_process_group(
+                backend='nccl',
+                rank=rank,
+                world_size=world_size,
+                device_id=local_rank
+            )
+        
+        logger.info(f"Distributed training setup: rank={rank}, world_size={world_size}, local_rank={local_rank}")
+        return True, rank, world_size, local_rank
+    else:
+        logger.info("No distributed environment detected, using single GPU")
+        return False, 0, 1, 0
+
+
 class SFTTrainerPipeline:
     
-    def __init__(self, config: Dict):
+    def __init__(self, config: dict):
         self.config = config
         self.model = None
         self.tokenizer = None
         self.trainer = None
         
+        # Setup distributed training first
+        self.is_distributed, self.rank, self.world_size, self.local_rank = setup_distributed()
+        
         # Set seeds
         seed = self.config.get("seed", 42)
         set_seed(seed)
         
-        logger.info("SFT Trainer Pipeline initialized")
-        
-        # Check for multi-GPU setup
-        import torch
-        if torch.cuda.is_available():
-            gpu_count = torch.cuda.device_count()
-            logger.info(f"Available GPUs: {gpu_count}")
-            for i in range(gpu_count):
-                logger.info(f"GPU {i}: {torch.cuda.get_device_name(i)}")
-        else:
-            logger.info("CUDA not available")
+        if self.rank == 0:
+            logger.info("Fixed SFT Trainer Pipeline initialized")
         
     def load_model_and_tokenizer(self):
-        model_name = self.config.get("model_name", "Qwen/Qwen2.5-32B-Instruct")
+        model_name = self.config.get("model_name", "Qwen/Qwen2.5-7B-Instruct")
         
-        logger.info(f"Loading model: {model_name}")
+        if self.rank == 0:
+            logger.info(f"Loading model: {model_name}")
         
-        # Load model with full precision (no quantization for better performance)
+        # Load model with proper device placement
+        device_map = None
+        if not self.is_distributed:
+            device_map = "auto"
+        
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.bfloat16,  # Use bfloat16 for better numerical stability
+            torch_dtype=torch.bfloat16,
             trust_remote_code=True,
-            device_map=None,  # Let accelerator handle device placement
+            device_map=device_map,
         )
+        
+        # Move model to correct device for distributed training
+        if self.is_distributed:
+            self.model = self.model.to(f'cuda:{self.local_rank}')
         
         # Load tokenizer
         self.tokenizer = AutoTokenizer.from_pretrained(
@@ -76,41 +98,36 @@ class SFTTrainerPipeline:
             padding_side="right"
         )
         
-        # Set pad token if not exists
         if self.tokenizer.pad_token is None:
             self.tokenizer.pad_token = self.tokenizer.eos_token
             
-        logger.info("Model and tokenizer loaded successfully")
+        if self.rank == 0:
+            logger.info("Model and tokenizer loaded successfully")
         
     def setup_lora(self):
         """Setup LoRA for efficient fine-tuning"""
         if not self.config.get("use_lora", True):
             return
             
-        logger.info("Setting up LoRA configuration")
+        if self.rank == 0:
+            logger.info("Setting up LoRA configuration")
         
         lora_config = LoraConfig(
             task_type=TaskType.CAUSAL_LM,
-            r=self.config.get("lora_r", 64),  # Higher rank for better performance
+            r=self.config.get("lora_r", 64),
             lora_alpha=self.config.get("lora_alpha", 128),
             lora_dropout=self.config.get("lora_dropout", 0.1),
             target_modules=self.config.get("lora_target_modules", [
                 "q_proj", "k_proj", "v_proj", "o_proj",
                 "gate_proj", "up_proj", "down_proj",
-                "lm_head"  # Include output layer
+                "lm_head"
             ]),
             bias="none",
         )
         
         self.model = get_peft_model(self.model, lora_config)
         
-        # Check if we're in the main process (for distributed training)
-        import torch
-        is_main_process = True
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            is_main_process = torch.distributed.get_rank() == 0
-            
-        if is_main_process:
+        if self.rank == 0:
             self.model.print_trainable_parameters()
         
     def load_dataset(self) -> Dataset:
@@ -121,43 +138,27 @@ class SFTTrainerPipeline:
         if not dataset_path:
             raise ValueError("Dataset path not specified in config")
             
-        logger.info(f"Loading dataset from: {dataset_path}")
+        if self.rank == 0:
+            logger.info(f"Loading dataset from: {dataset_path}")
         
-        if dataset_format == "json":
-            if dataset_path.endswith(".jsonl"):
-                dataset = load_dataset("json", data_files=dataset_path, split="train")
-            else:
-                dataset = load_dataset("json", data_files=dataset_path, split="train")
-        elif dataset_format == "csv":
+        if dataset_format == "csv":
             dataset = load_dataset("csv", data_files=dataset_path, split="train")
+        elif dataset_format == "json":
+            dataset = load_dataset("json", data_files=dataset_path, split="train")
         else:
             raise ValueError(f"Unsupported dataset format: {dataset_format}")
             
-        logger.info(f"Dataset loaded with {len(dataset)} examples")
+        if self.rank == 0:
+            logger.info(f"Dataset loaded with {len(dataset)} examples")
         return dataset
         
     def format_dataset(self, dataset: Dataset) -> Dataset:
         """Format dataset for SFT training"""
         def format_conversation(example):
-            """Format a single conversation example"""
             messages = example.get("messages", [])
             
             if not messages:
-                # Handle different data formats
-                if "conversation" in example:
-                    messages = example["conversation"]
-                elif "instruction" in example and "response" in example:
-                    messages = [
-                        {"role": "user", "content": example["instruction"]},
-                        {"role": "assistant", "content": example["response"]}
-                    ]
-                elif "prompt" in example and "completion" in example:
-                    messages = [
-                        {"role": "user", "content": example["prompt"]},
-                        {"role": "assistant", "content": example["completion"]}
-                    ]
-                elif "input_data" in example and "output_data" in example:
-                    # Handle Rust dataset format using centralized parser from data_utils
+                if "input_data" in example and "output_data" in example:
                     messages = parse_rust_dataset_format(
                         example["input_data"],
                         example["output_data"], 
@@ -165,11 +166,14 @@ class SFTTrainerPipeline:
                     )
                     if not messages:
                         return {"text": ""}
+                elif "instruction" in example and "response" in example:
+                    messages = [
+                        {"role": "user", "content": example["instruction"]},
+                        {"role": "assistant", "content": example["response"]}
+                    ]
                 else:
-                    logger.warning(f"Unknown data format in example: {example.keys()}")
                     return {"text": ""}
             
-            # Apply chat template
             try:
                 formatted_text = self.tokenizer.apply_chat_template(
                     messages,
@@ -177,71 +181,48 @@ class SFTTrainerPipeline:
                     add_generation_prompt=False
                 )
             except Exception as e:
-                logger.warning(f"Failed to apply chat template: {e}")
-                # Fallback formatting
                 formatted_text = self._fallback_format(messages)
                 
             return {"text": formatted_text}
         
-        logger.info("Formatting dataset for SFT training")
-        formatted_dataset = dataset.map(format_conversation, remove_columns=dataset.column_names)
+        if self.rank == 0:
+            logger.info("Formatting dataset for SFT training")
         
-        # Filter out empty examples
+        formatted_dataset = dataset.map(format_conversation, remove_columns=dataset.column_names)
         formatted_dataset = formatted_dataset.filter(lambda x: len(x["text"].strip()) > 0)
         
-        logger.info(f"Formatted dataset has {len(formatted_dataset)} examples")
+        if self.rank == 0:
+            logger.info(f"Formatted dataset has {len(formatted_dataset)} examples")
         return formatted_dataset
     
-    def _fallback_format(self, messages: List[Dict[str, str]]) -> str:
+    def _fallback_format(self, messages):
         """Fallback formatting when chat template fails"""
         formatted_parts = []
-        
         for message in messages:
             role = message.get("role", "user")
             content = message.get("content", "")
-            
             if role == "system":
                 formatted_parts.append(f"System: {content}")
             elif role == "user":
                 formatted_parts.append(f"Human: {content}")
             elif role == "assistant":
                 formatted_parts.append(f"Assistant: {content}")
-            else:
-                formatted_parts.append(f"{role.title()}: {content}")
-                
         return "\n\n".join(formatted_parts) + "\n"
         
-    def create_training_args(self) -> SFTConfig:
-        """Create training arguments with multi-GPU support"""
-        import torch
-        
-        # Calculate effective batch size
+    def create_training_args(self):
+        """Create training arguments with fixed distributed setup"""
         per_device_batch_size = self.config.get("per_device_train_batch_size", 2)
         gradient_accumulation_steps = self.config.get("gradient_accumulation_steps", 4)
         
-        # For multi-GPU, we need to check if we're in a distributed environment
-        world_size = 1
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            world_size = torch.distributed.get_world_size()
-        elif torch.cuda.is_available():
-            # If not in distributed mode but multi-GPU is requested, use device count
-            world_size = torch.cuda.device_count() if self.config.get("use_multi_gpu", False) else 1
-            
-        effective_batch_size = per_device_batch_size * gradient_accumulation_steps * world_size
+        effective_batch_size = per_device_batch_size * gradient_accumulation_steps * self.world_size
         
-        logger.info(f"Effective batch size: {effective_batch_size} "
-                   f"(per_device: {per_device_batch_size}, "
-                   f"grad_accum: {gradient_accumulation_steps}, "
-                   f"world_size: {world_size})")
-        
-        # Check if multi-GPU training is enabled
-        use_multi_gpu = self.config.get("use_multi_gpu", False) and world_size > 1
-        logger.info(f"Multi-GPU training: {'enabled' if use_multi_gpu else 'disabled'}")
+        if self.rank == 0:
+            logger.info(f"Effective batch size: {effective_batch_size}")
+            logger.info(f"Multi-GPU training: {'enabled' if self.is_distributed else 'disabled'}")
         
         return SFTConfig(
-            output_dir=self.config.get("output_dir", "./qwen2.5-32b-sft"),
+            output_dir=self.config.get("output_dir", "./qwen2.5-7b-sft"),
             per_device_train_batch_size=per_device_batch_size,
-            per_device_eval_batch_size=self.config.get("per_device_eval_batch_size", 2),
             gradient_accumulation_steps=gradient_accumulation_steps,
             learning_rate=self.config.get("learning_rate", 2e-5),
             num_train_epochs=self.config.get("num_train_epochs", 3),
@@ -249,92 +230,40 @@ class SFTTrainerPipeline:
             warmup_steps=self.config.get("warmup_steps", 100),
             logging_steps=self.config.get("logging_steps", 10),
             save_steps=self.config.get("save_steps", 500),
-            eval_steps=self.config.get("eval_steps", 500),
             save_strategy=self.config.get("save_strategy", "steps"),
-            load_best_model_at_end=False,  # Disable since we don't have eval dataset
-            metric_for_best_model=self.config.get("metric_for_best_model", "eval_loss"),
-            greater_is_better=False,
-            fp16=False,  # Use bf16 instead
-            bf16=True,   # Better numerical stability
+            bf16=True,
             dataloader_pin_memory=True,
             remove_unused_columns=False,
-            push_to_hub=self.config.get("push_to_hub", False),
-            hub_model_id=self.config.get("hub_model_id"),
-            hub_token=self.config.get("hub_token"),
             report_to=self.config.get("report_to", "wandb" if self.config.get("use_wandb", False) else "none"),
-            run_name=self.config.get("run_name", "qwen2.5-32b-sft"),
+            run_name=self.config.get("run_name", "qwen2.5-7b-sft"),
             seed=self.config.get("seed", 42),
             data_seed=self.config.get("data_seed", 42),
-            # Multi-GPU specific settings (simplified to avoid hanging)
-            **({} if not use_multi_gpu else {
-                "ddp_find_unused_parameters": self.config.get("ddp_find_unused_parameters", False),
-                "ddp_backend": self.config.get("ddp_backend", "nccl"),
-                "ddp_timeout": self.config.get("ddp_timeout", 1800),
-            }),
-            # Gradient checkpointing for memory efficiency
-            gradient_checkpointing=self.config.get("gradient_checkpointing", False),
+            # Fixed distributed settings
+            local_rank=self.local_rank if self.is_distributed else -1,
+            ddp_backend="nccl" if self.is_distributed else None,
+            ddp_find_unused_parameters=False,
+            ddp_timeout=1800,
             # Optimizer settings
             optim=self.config.get("optim", "adamw_torch_fused"),
-            adam_beta1=self.config.get("adam_beta1",0.9),
-            adam_beta2=self.config.get("adam_beta2",0.95),
-            adam_epsilon=self.config.get("adam_epsilon",1e-8),
-            weight_decay=self.config.get("weight_decay",0.01),
-            max_grad_norm=self.config.get("max_grad_norm",1.0),
-            # Learning rate scheduler
-            lr_scheduler_type=self.config.get("lr_scheduler_type","cosine"),
-            warmup_ratio=self.config.get("warmup_ratio",0.1),
-            # SFT-specific parameters
-            max_length=self.config.get("max_seq_length", 4096),
+            weight_decay=self.config.get("weight_decay", 0.01),
+            max_grad_norm=self.config.get("max_grad_norm", 1.0),
+            lr_scheduler_type=self.config.get("lr_scheduler_type", "cosine"),
+            warmup_ratio=self.config.get("warmup_ratio", 0.1),
+            # SFT-specific parameters (correct API)
+            max_length=self.config.get("max_seq_length", 2048),
             dataset_text_field="text",
-            packing=self.config.get("packing", True),
+            packing=self.config.get("packing", False),
         )
-        
-    def create_trainer(self, dataset: Dataset) -> SFTTrainer:
-        """Create the SFT trainer with multi-GPU support"""
-        training_args = self.create_training_args()
-        
-        # Create data collator
-        data_collator = DataCollatorForLanguageModeling(
-            tokenizer=self.tokenizer,
-            mlm=False,
-        )
-        
-        # Create trainer
-        trainer = SFTTrainer(
-            model=self.model,
-            args=training_args,
-            train_dataset=dataset,
-            eval_dataset=None,  
-            processing_class=self.tokenizer,
-        )
-
-        # Only add data_collator if packing is disabled
-        if not self.config.get("packing", True):
-            data_collator = DataCollatorForLanguageModeling(
-                tokenizer=self.tokenizer,
-                mlm=False,
-            )
-            trainer_kwargs["data_collator"] = data_collator
-        
-        return trainer
         
     def train(self):
-        """Main training function with multi-GPU support"""
-        import torch
-        
-        # Check if we're in the main process (for distributed training)
-        is_main_process = True
-        if torch.distributed.is_available() and torch.distributed.is_initialized():
-            is_main_process = torch.distributed.get_rank() == 0
+        """Main training function with fixed distributed setup"""
+        if self.rank == 0:
+            logger.info("Starting Fixed SFT training pipeline")
             
-        if is_main_process:
-            logger.info("Starting SFT training pipeline")
-            
-            # Initialize wandb if enabled
             if self.config.get("use_wandb", False):
                 wandb.init(
                     project=self.config.get("wandb_project", "qwen2.5-sft"),
-                    name=self.config.get("run_name", "qwen2.5-32b-sft"),
+                    name=self.config.get("run_name", "qwen2.5-7b-sft"),
                     config=self.config
                 )
         
@@ -342,66 +271,65 @@ class SFTTrainerPipeline:
             # Load model and tokenizer
             self.load_model_and_tokenizer()
             
-            # Setup LoRA if enabled
+            # Setup LoRA
             self.setup_lora()
             
             # Load and format dataset
             dataset = self.load_dataset()
             formatted_dataset = self.format_dataset(dataset)
             
-            # Create trainer - SFTTrainer handles multi-GPU internally via TrainingArguments
-            self.trainer = self.create_trainer(formatted_dataset)
+            # Create training arguments
+            training_args = self.create_training_args()
             
-            # Start training
-            if is_main_process:
+            # Create trainer with correct API
+            self.trainer = SFTTrainer(
+                model=self.model,
+                args=training_args,
+                train_dataset=formatted_dataset,
+                processing_class=self.tokenizer,
+            )
+            
+            if self.rank == 0:
                 logger.info("Starting training...")
             
+            # Start training
             self.trainer.train()
             
             # Save model
-            if is_main_process:
+            if self.rank == 0:
                 logger.info("Saving model...")
                 self.trainer.save_model()
-                self.tokenizer.save_pretrained(self.config.get("output_dir", "./qwen2.5-32b-sft"))
+                self.tokenizer.save_pretrained(self.config.get("output_dir"))
                 logger.info("Training completed successfully!")
             
         except Exception as e:
-            logger.error(f"Training failed: {str(e)}")
+            if self.rank == 0:
+                logger.error(f"Training failed: {str(e)}")
             raise
         finally:
-            if is_main_process and self.config.get("use_wandb", False):
+            if self.rank == 0 and self.config.get("use_wandb", False):
                 wandb.finish()
+            
+            # Clean up distributed
+            if self.is_distributed and dist.is_initialized():
+                dist.destroy_process_group()
 
 
-def load_config(config_path: str) -> Dict:
+def load_config(config_path: str) -> dict:
     """Load configuration from JSON file"""
     with open(config_path, 'r') as f:
         return json.load(f)
 
 
 def main():
-    """Main function"""
-    parser = argparse.ArgumentParser(description="SFT Training Pipeline for Qwen2.5 32B")
-    parser.add_argument("--config", type=str, required=True, help="Path to configuration file")
-    parser.add_argument("--dataset", type=str, help="Path to dataset file (overrides config)")
-    parser.add_argument("--output_dir", type=str, help="Output directory (overrides config)")
-    parser.add_argument("--model_name", type=str, help="Model name (overrides config)")
+    import argparse
     
+    parser = argparse.ArgumentParser(description="Fixed SFT Training Pipeline")
+    parser.add_argument("--config", type=str, required=True, help="Path to configuration file")
     args = parser.parse_args()
     
-    # Load configuration
     config = load_config(args.config)
-    
-    # Override config with command line arguments
-    if args.dataset:
-        config["dataset_path"] = args.dataset
-    if args.output_dir:
-        config["output_dir"] = args.output_dir
-    if args.model_name:
-        config["model_name"] = args.model_name
-    
-    # Create and run training pipeline
-    pipeline = SFTTrainerPipeline(config)
+    pipeline = FixedSFTTrainerPipeline(config)
     pipeline.train()
 
 

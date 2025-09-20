@@ -41,8 +41,18 @@
   "lr_scheduler_type": "cosine",
   "warmup_ratio": 0.1,
   
-  "fsdp": "",
-  "fsdp_config": {},
+  "fsdp": "full_shard auto_wrap",
+  "fsdp_config": {
+    "fsdp_auto_wrap_policy": "TRANSFORMER_BASED_WRAP",
+    "fsdp_sharding_strategy": "FULL_SHARD",
+    "fsdp_cpu_ram_efficient_loading": true,
+    "fsdp_transformer_layer_cls_to_wrap": ["Qwen2DecoderLayer"],
+    "fsdp_backward_prefetch": "BACKWARD_PRE",
+    "fsdp_state_dict_type": "SHARDED_STATE_DICT",
+    "fsdp_forward_prefetch": false,
+    "fsdp_use_orig_params": true
+  },
+  
   "ddp_find_unused_parameters": false,
   "ddp_backend": "nccl",
   "ddp_timeout": 1800,
