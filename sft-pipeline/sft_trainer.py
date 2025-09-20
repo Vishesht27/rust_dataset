@@ -83,7 +83,7 @@ class SFTTrainerPipeline:
         
         self.model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            torch_dtype=torch.bfloat16,
+            dtype=torch.bfloat16,
             trust_remote_code=True,
             device_map=device_map,
         )
@@ -252,7 +252,7 @@ class SFTTrainerPipeline:
             "lr_scheduler_type": self.config.get("lr_scheduler_type", "cosine"),
             "warmup_ratio": self.config.get("warmup_ratio", 0.1),
             # SFT-specific parameters
-            "max_seq_length": self.config.get("max_seq_length", 2048),
+            "max_length": self.config.get("max_seq_length", 2048),
             "dataset_text_field": "text",
             "packing": self.config.get("packing", False),
         }
